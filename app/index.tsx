@@ -1,10 +1,41 @@
-import { View, Text, ImageBackground, TouchableOpacity, StyleSheet } from "react-native"
+"use client"
+
+import { useEffect } from "react"
+import { useRouter } from "expo-router"
+import { View, ActivityIndicator, Text, ImageBackground, TouchableOpacity, StyleSheet } from "react-native"
 import { Link } from "expo-router"
 import { useFonts } from "expo-font"
 import { StatusBar } from "expo-status-bar"
 import { AntDesign } from "@expo/vector-icons"
+import { onAuthStateChanged } from "firebase/auth"
+import { auth } from "./firebase/config"
 
-export default function SplashScreen() {
+export default function Index() {
+  const router = useRouter()
+
+  useEffect(() => {
+    // Check if user is already logged in
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // User is signed in, redirect to home
+        router.replace("/home")
+      } else {
+        // No user is signed in, show the splash screen
+        router.replace("/splash")
+      }
+    })
+
+    return unsubscribe
+  }, [])
+
+  return (
+    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <ActivityIndicator size="large" color="#000" />
+    </View>
+  )
+}
+
+function SplashScreen() {
   // Load the required fonts
   const [fontsLoaded] = useFonts({
     "AlfaSlabOne-Regular": require("../assets/fonts/AlfaSlabOne-Regular.ttf"),
