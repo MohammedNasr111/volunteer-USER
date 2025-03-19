@@ -6,8 +6,7 @@ import { Link, useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { X, ArrowLeft } from "lucide-react-native"
 import { useFonts } from "expo-font"
-import { signInWithEmailAndPassword } from "firebase/auth"
-import { auth } from "./firebase/config"
+import { loginUser } from "./firebase/users"
 
 export default function LoginScreen() {
   const router = useRouter()
@@ -37,11 +36,24 @@ export default function LoginScreen() {
     try {
       setLoading(true)
       setError("")
-      await signInWithEmailAndPassword(auth, email, password)
+
+      // Use the enhanced login function
+      await loginUser(email, password)
+
       router.replace("/home")
-    } catch (error) {
-      setError("Invalid email or password")
-      console.error("Login error:", error)
+    } catch (error: any) {
+      // Handle specific error codes
+      if (error.message === "admin_not_allowed") {
+        setError("Admin accounts cannot log in to the mobile app")
+      } else if (error.code === "auth/user-not-found") {
+        setError("Email doesn't exist, please sign up")
+      } else if (error.code === "auth/wrong-password" || error.code === "auth/invalid-credential") {
+        setError("Invalid email or password")
+      } else if (error.code === "auth/invalid-email") {
+        setError("Please enter a valid email address")
+      } else {
+        setError("An error occurred during login. Please try again.")
+      }
     } finally {
       setLoading(false)
     }
@@ -51,8 +63,8 @@ export default function LoginScreen() {
     <View style={styles.container}>
       <StatusBar style="dark" />
 
-      {/* Back button */}
-      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+      {/* Back button - Updated to go to splash screen */}
+      <TouchableOpacity style={styles.backButton} onPress={() => router.push("/splash")}>
         <ArrowLeft size={24} color="#000" />
       </TouchableOpacity>
 

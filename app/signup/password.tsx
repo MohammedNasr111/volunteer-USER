@@ -1,14 +1,12 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Alert } from "react-native"
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView } from "react-native"
 import { useRouter, useLocalSearchParams } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { X, ArrowLeft, Check } from "lucide-react-native"
 import { useFonts } from "expo-font"
-import { createUserWithEmailAndPassword } from "firebase/auth"
-import { doc, setDoc } from "firebase/firestore"
-import { auth, db } from "../firebase/config"
+import { signupUser } from "../firebase/users"
 
 export default function PasswordScreen() {
   const router = useRouter()
@@ -18,6 +16,7 @@ export default function PasswordScreen() {
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
 
   // Password validation states
   const [hasUppercase, setHasUppercase] = useState(false)
@@ -59,24 +58,32 @@ export default function PasswordScreen() {
 
     try {
       setLoading(true)
-      // Create user with email and password
-      const userCredential = await createUserWithEmailAndPassword(auth, email as string, password)
-      const user = userCredential.user
+      setError("")
 
-      // Save user data to Firestore
-      await setDoc(doc(db, "users", user.uid), {
+      // Use the enhanced signup function
+      await signupUser(email as string, password, {
         firstName,
         lastName,
-        email,
         phoneNumber,
-        createdAt: new Date().toISOString(),
+        onboarding_completed: false,
       })
 
-      // Navigate to home screen
-      router.replace("/home")
-    } catch (error) {
-      console.error("Error signing up:", error)
-      Alert.alert("Sign Up Failed", "There was an error creating your account. Please try again.")
+      // Navigate to preferences screen
+      router.push({
+        pathname: "/preferences" as any,
+        params: { firstName },
+      })
+    } catch (error: any) {
+      // Handle specific error codes
+      if (error.code === "auth/email-already-in-use") {
+        setError("This email already exists. Please try a different email.")
+      } else if (error.code === "auth/invalid-email") {
+        setError("Please enter a valid email address.")
+      } else if (error.code === "auth/weak-password") {
+        setError("Password is too weak. Please choose a stronger password.")
+      } else {
+        setError("There was an error creating your account. Please try again.")
+      }
     } finally {
       setLoading(false)
     }
@@ -131,6 +138,8 @@ export default function PasswordScreen() {
         </View>
         <Text style={styles.helperText}>(minimum 8 characters)*</Text>
       </View>
+
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <View style={styles.requirementsContainer}>
         <View style={styles.requirementRow}>
@@ -213,6 +222,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666",
     marginTop: 5,
+  },
+  errorText: {
+    color: "red",
+    marginBottom: 10,
   },
   requirementsContainer: {
     marginTop: 20,

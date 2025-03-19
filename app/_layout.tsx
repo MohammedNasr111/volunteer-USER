@@ -4,7 +4,7 @@ import { Stack } from "expo-router"
 import { LogBox } from "react-native"
 import "./firebase/config" // Firebase config
 import { useEffect, useState } from "react"
-import { onAuthStateChanged, User } from "firebase/auth" // Import User type
+import { onAuthStateChanged, type User } from "firebase/auth" // Import User type
 import { auth } from "./firebase/config"
 
 // Ignore specific warnings that might come from dependencies
@@ -34,6 +34,9 @@ export default function Layout() {
       <Stack.Screen name="signup" />
       <Stack.Screen name="signup/password" />
       <Stack.Screen name="home" />
+      <Stack.Screen name="preferences" />
+      <Stack.Screen name="causes" />
     </Stack>
   )
 }
+

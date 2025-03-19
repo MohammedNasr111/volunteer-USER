@@ -139,7 +139,7 @@ export default function SignupScreen() {
         onPress={handleNext}
         disabled={!isFormValid}
       >
-        <Text style={styles.nextButtonText}>Next</Text>
+        <Text style={[styles.nextButtonText, isFormValid ? styles.nextButtonTextActive : {}]}>Next</Text>
       </TouchableOpacity>
     </ScrollView>
   )
@@ -216,12 +216,15 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   nextButtonActive: {
-    backgroundColor: "#e0e0e0",
+    backgroundColor: "#000",
   },
   nextButtonText: {
-    color: "#000",
+    color: "#999", // Lighter color when disabled
     fontSize: 16,
     fontWeight: "bold",
+  },
+  nextButtonTextActive: {
+    color: "#fff",
   },
 })
 
