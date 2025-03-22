@@ -42,14 +42,14 @@ export default function PreferencesScreen() {
             <View style={styles.featureContainer}>
               <Text style={styles.featureTitle}>Sign up for Volunteer Opportunities</Text>
               <Text style={styles.featureDescription}>
-                Sign up for events directly through our app with just a few clicks, hassle free.
+                Sign up for causes directly through our app with just a few clicks, hassle free.
               </Text>
             </View>
 
             <View style={styles.featureContainer}>
               <Text style={styles.featureTitle}>Stay in touch with Organizations</Text>
               <Text style={styles.featureDescription}>
-                Never miss an update from organizers and always be the first to know about new events.
+                Never miss an update from organizers and always be the first to know about new causes.
               </Text>
             </View>
 

@@ -36,6 +36,8 @@ export default function Layout() {
       <Stack.Screen name="home" />
       <Stack.Screen name="preferences" />
       <Stack.Screen name="causes" />
+      <Stack.Screen name="frequency" />
+      <Stack.Screen name="location" />
     </Stack>
   )
 }

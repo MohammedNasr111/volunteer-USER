@@ -1,12 +1,11 @@
 "use client"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList } from "react-native"
-import { useRouter } from "expo-router"
+import { useRouter, useLocalSearchParams } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { ArrowLeft, Check } from "lucide-react-native"
 import { useFonts } from "expo-font"
-import { doc, updateDoc } from "firebase/firestore"
+import { doc, updateDoc, getDoc } from "firebase/firestore"
 import { auth, db } from "./firebase/config"
 
 // Define the causes data
@@ -30,6 +29,9 @@ const causesData = [
 
 export default function CausesScreen() {
   const router = useRouter()
+  const params = useLocalSearchParams()
+  const { previouslySelected } = params
+
   const [selectedCauses, setSelectedCauses] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -38,6 +40,40 @@ export default function CausesScreen() {
     "Alata-Regular": require("../assets/fonts/Alata-Regular.ttf"),
     "AbhayaLibre-Regular": require("../assets/fonts/AbhayaLibre-Regular.ttf"),
   })
+
+  // Load previously selected causes if coming back from frequency page
+  useEffect(() => {
+    if (previouslySelected) {
+      try {
+        const parsedCauses = JSON.parse(previouslySelected as string)
+        if (Array.isArray(parsedCauses)) {
+          setSelectedCauses(parsedCauses)
+        }
+      } catch (error) {
+        console.error("Error parsing previously selected causes:", error)
+      }
+    } else {
+      // If not coming back from frequency page, check if user has already selected causes
+      const fetchUserCauses = async () => {
+        try {
+          const userId = auth.currentUser?.uid
+          if (userId) {
+            const userDoc = await getDoc(doc(db, "users", userId))
+            if (userDoc.exists()) {
+              const userData = userDoc.data()
+              if (userData.cause_preferences) {
+                setSelectedCauses(userData.cause_preferences)
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching user causes:", error)
+        }
+      }
+
+      fetchUserCauses()
+    }
+  }, [previouslySelected])
 
   if (!fontsLoaded) {
     return null // Return null while fonts are loading
@@ -62,12 +98,14 @@ export default function CausesScreen() {
         // Save selected causes to Firestore
         await updateDoc(doc(db, "users", userId), {
           cause_preferences: selectedCauses,
-          onboarding_completed: true,
         })
       }
 
-      // Navigate to home screen
-      router.replace("/home")
+      // Navigate to frequency page
+      router.push({
+        pathname: "/frequency" as any,
+        params: { fromCauses: "true" },
+      })
     } catch (error) {
       console.error("Error saving preferences:", error)
     } finally {
@@ -76,7 +114,8 @@ export default function CausesScreen() {
   }
 
   const handleSkip = () => {
-    router.replace("/home")
+    // Navigate to frequency page without saving causes
+    router.push("/frequency" as any)
   }
 
   const renderCauseItem = ({ item }: { item: (typeof causesData)[0] }) => {
