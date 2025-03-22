@@ -12,6 +12,7 @@ import {
   SafeAreaView,
   Linking,
   Platform,
+  Dimensions,
 } from "react-native"
 import { useRouter, useLocalSearchParams } from "expo-router"
 import { StatusBar } from "expo-status-bar"
@@ -333,6 +334,25 @@ export default function OpportunityDetailScreen() {
     fetchOpportunityDetails()
   }, [fetchOpportunityDetails])
 
+  // Add this useEffect after your existing useEffects
+  useEffect(() => {
+    // This helps with map rendering issues in Android emulators
+    if (Platform.OS === "android") {
+      const timeout = setTimeout(() => {
+        if (opportunity?.location?.coordinates) {
+          // Force a re-render of the map by creating a new reference
+          // Use type assertion to ensure TypeScript knows this is an Opportunity
+          setOpportunity((prev) => {
+            if (!prev) return null
+            return { ...prev } as Opportunity
+          })
+        }
+      }, 500)
+
+      return () => clearTimeout(timeout)
+    }
+  }, [opportunity?.location])
+
   if (!fontsLoaded || loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -554,6 +574,25 @@ export default function OpportunityDetailScreen() {
     const items = scheduleString.split(/[\n;]/).filter((item) => item.trim().length > 0)
 
     return items.map((item) => {
+      // Try to match the format "HH:MM AM - HH:MM AM: Activity"
+      const timeRangeMatch = item.match(/^(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{1,2}:\d{2}\s*[AP]M):\s*(.+)$/i)
+      if (timeRangeMatch) {
+        return {
+          time: `${timeRangeMatch[1]} - ${timeRangeMatch[2]}`,
+          activity: timeRangeMatch[3].trim(),
+        }
+      }
+
+      // Try to match the format shown in the first image: "06:30 AM - 07:00 AM: Registration & Warm-up"
+      const dashMatch = item.match(/^(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{1,2}:\d{2}\s*[AP]M):\s*(.+)$/i)
+      if (dashMatch) {
+        return {
+          time: `${dashMatch[1]} - ${dashMatch[2]}`,
+          activity: dashMatch[3].trim(),
+        }
+      }
+
+      // Fallback for any other format
       const parts = item.split(":")
       if (parts.length >= 2) {
         return {
@@ -561,6 +600,7 @@ export default function OpportunityDetailScreen() {
           activity: parts.slice(1).join(":").trim(),
         }
       }
+
       return { time: "", activity: item.trim() }
     })
   }
@@ -685,7 +725,7 @@ export default function OpportunityDetailScreen() {
             </View>
           </View>
 
-          {/* Map View */}
+          {/* Map View - Adjust size in styles.mapContainer */}
           {opportunity.location?.coordinates && (
             <View style={styles.mapContainer}>
               <MapView
@@ -693,10 +733,20 @@ export default function OpportunityDetailScreen() {
                 initialRegion={{
                   latitude: opportunity.location.coordinates.lat,
                   longitude: opportunity.location.coordinates.lng,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
+                  latitudeDelta: 0.01, // Adjust this value to control zoom level
+                  longitudeDelta: 0.01, // Adjust this value to control zoom level
                 }}
                 provider="google"
+                zoomEnabled={true}
+                zoomControlEnabled={true}
+                minZoomLevel={10} // Minimum zoom level
+                maxZoomLevel={20} // Maximum zoom level
+                rotateEnabled={false}
+                scrollEnabled={true} // Enable scrolling/panning
+                pitchEnabled={true} // Enable tilting
+                loadingEnabled={true}
+                loadingIndicatorColor="#15B2BF"
+                loadingBackgroundColor="#f9f9f9"
               >
                 <Marker
                   coordinate={{
@@ -779,8 +829,10 @@ export default function OpportunityDetailScreen() {
               <View style={styles.scheduleContainer}>
                 {scheduleItems.map((item, index) => (
                   <View key={index} style={styles.scheduleItem}>
-                    <Text style={styles.scheduleTime}>{item.time}</Text>
-                    <Text style={styles.scheduleActivity}>{item.activity}</Text>
+                    <View style={styles.bulletPoint} />
+                    <Text style={styles.scheduleText}>
+                      {item.time}: {item.activity}
+                    </Text>
                   </View>
                 ))}
               </View>
@@ -880,7 +932,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 18,
+    fontSize: 22,
     color: "#15B2BF",
     textAlign: "center",
     flex: 1,
@@ -904,9 +956,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   organizationLogo: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 51, // Changed from 40 to 51
+    height: 51, // Changed from 40 to 51
+    borderRadius: 25.5, // Adjusted to half of width/height
     marginRight: 10,
   },
   organizationInfo: {
@@ -914,8 +966,9 @@ const styles = StyleSheet.create({
   },
   organizationName: {
     fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 16,
+    fontSize: 16, // Increased from 16
     marginBottom: 2,
+    fontWeight: "bold", // Added to make it more prominent
   },
   organizationType: {
     fontSize: 12,
@@ -936,11 +989,19 @@ const styles = StyleSheet.create({
   joinButton: {
     backgroundColor: "#15B2BF",
     borderRadius: 30,
-    height: 50,
+    height: 37, // Changed from 50 to 37
     justifyContent: "center",
     alignItems: "center",
     marginHorizontal: 20,
     marginBottom: 20,
+    width: 142, // Added width specification
+    alignSelf: "center", // Center the button
+    // Add shadow properties
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5, // For Android shadow
   },
   cancelButton: {
     backgroundColor: "#FF4757",
@@ -956,6 +1017,13 @@ const styles = StyleSheet.create({
   bottomJoinButton: {
     marginTop: 20,
     marginBottom: 40,
+    height: 37, // Ensure this matches the joinButton height
+    // Add shadow properties
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5, // For Android shadow
   },
   divider: {
     height: 1,
@@ -967,7 +1035,7 @@ const styles = StyleSheet.create({
     marginBottom: 15,
   },
   sectionTitle: {
-    fontFamily: "AbhayaLibre-ExtraBold",
+    fontFamily: "Alata-Regular",
     fontSize: 18,
     marginBottom: 15,
   },
@@ -1028,7 +1096,10 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
   },
   mapContainer: {
-    height: 200,
+    height: Dimensions.get("window").height * 0.3, // 30% of screen height
+    width: "100%",
+    maxWidth: 400, // Maximum width as requested
+    alignSelf: "center", // Center the map if it's smaller than the screen
     borderRadius: 10,
     overflow: "hidden",
     position: "relative",
@@ -1036,6 +1107,9 @@ const styles = StyleSheet.create({
   },
   map: {
     ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+    borderRadius: 10,
   },
   mapImage: {
     width: "100%",
@@ -1044,7 +1118,7 @@ const styles = StyleSheet.create({
   },
   mapOverlay: {
     position: "absolute",
-    bottom: 10,
+    top: 10,
     right: 10,
     backgroundColor: "#fff",
     paddingHorizontal: 12,
@@ -1126,21 +1200,26 @@ const styles = StyleSheet.create({
   },
   scheduleContainer: {
     marginBottom: 10,
+    paddingLeft: 10,
   },
   scheduleItem: {
     flexDirection: "row",
     marginBottom: 15,
-    paddingHorizontal: 5,
+    alignItems: "flex-start",
   },
-  scheduleTime: {
-    width: 80,
-    fontSize: 14,
-    fontWeight: "500",
+  bulletPoint: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#000",
     marginRight: 10,
+    marginTop: 6,
   },
-  scheduleActivity: {
+  scheduleText: {
     flex: 1,
     fontSize: 14,
+    lineHeight: 20,
+    color: "#333",
   },
   contactSubtitle: {
     fontSize: 14,

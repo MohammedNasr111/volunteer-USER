@@ -149,7 +149,7 @@ export default function LocationScreen() {
         await updateDoc(doc(db, "users", userId), {
           location_enabled: enabled,
           background_location_enabled: backgroundEnabled,
-          onboarding_completed: true,
+          // Don't mark onboarding as completed here, we still need to show the tour
         })
       }
     } catch (error) {
@@ -160,13 +160,13 @@ export default function LocationScreen() {
   const handleMaybeLater = async () => {
     // Update user preference to indicate they declined location
     await updateUserLocationPreference(false, false)
-    // Navigate to home
-    router.replace("/home")
+    // Navigate to onboarding instead of home
+    router.replace("/onboarding" as any)
   }
 
   const handleFindOpportunities = () => {
-    // Navigate to home
-    router.replace("/home")
+    // Navigate to onboarding instead of home
+    router.replace("/onboarding" as any)
   }
 
   const handleAllowAllTime = async () => {

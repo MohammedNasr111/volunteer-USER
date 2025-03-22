@@ -1,10 +1,10 @@
 "use client"
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
 import { useRouter } from "expo-router"
-import { Home, Search, Bell, User } from "lucide-react-native"
+import { Home, Clock, Bell, User } from "lucide-react-native"
 
 type BottomNavigationProps = {
-  activeTab: "home" | "discover" | "notifications" | "profile"
+  activeTab: "home" | "history" | "notifications" | "profile"
 }
 
 export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
@@ -12,7 +12,7 @@ export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
 
   // Use a more direct approach to navigation to avoid TypeScript issues
   const navigateToHome = () => router.push("/home" as any)
-  const navigateToDiscover = () => router.push("/discover" as any)
+  const navigateToHistory = () => router.push("/history" as any)
   const navigateToNotifications = () => router.push("/notifications" as any)
   const navigateToProfile = () => router.push("/profile" as any)
 
@@ -23,9 +23,9 @@ export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
         <Text style={[styles.tabText, activeTab === "home" && styles.activeTabText]}>Home</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.tabItem} onPress={navigateToDiscover} activeOpacity={0.7}>
-        <Search size={22} color={activeTab === "discover" ? "#15B2BF" : "#666"} />
-        <Text style={[styles.tabText, activeTab === "discover" && styles.activeTabText]}>Discover</Text>
+      <TouchableOpacity style={styles.tabItem} onPress={navigateToHistory} activeOpacity={0.7}>
+        <Clock size={22} color={activeTab === "history" ? "#15B2BF" : "#666"} />
+        <Text style={[styles.tabText, activeTab === "history" && styles.activeTabText]}>History</Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.tabItem} onPress={navigateToNotifications} activeOpacity={0.7}>
