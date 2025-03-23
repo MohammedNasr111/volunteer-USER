@@ -24,6 +24,11 @@ import OpportunityCard, { type Opportunity } from "../components/opportunity-car
 import * as ImagePicker from "expo-image-picker"
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
 
+// Add a global update function at the top of the file, after imports
+declare global {
+  var updateProfileData: ((data: any) => void) | null
+}
+
 // Define the rank system
 const rankSystem = [
   { name: "Silver", minLevel: 1, maxLevel: 9, colors: ["#C0C0C0", "#E8E8E8"] as readonly [string, string] },
@@ -52,6 +57,34 @@ export default function ProfileScreen() {
   const [experienceLevel, setExperienceLevel] = useState(0)
   const [rank, setRank] = useState(rankSystem[0])
   const [uploadingImage, setUploadingImage] = useState(false)
+
+  // In the ProfileScreen component, add this inside the component but outside any other functions:
+  useEffect(() => {
+    // Create a global function that the edit profile page can call to update our state
+    global.updateProfileData = (newData) => {
+      setUserData(newData)
+
+      // Also update other derived state
+      if (newData.registered_opportunities) {
+        const level = newData.registered_opportunities.length * 2
+        setExperienceLevel(level)
+
+        // Determine rank based on level
+        const userRank = rankSystem.find((r) => level >= r.minLevel && level <= r.maxLevel) || rankSystem[0]
+        setRank(userRank)
+      }
+
+      // Refresh opportunities if needed
+      if (auth.currentUser?.uid) {
+        fetchOpportunities(auth.currentUser.uid, activeTab)
+      }
+    }
+
+    // Clean up the global function when component unmounts
+    return () => {
+      global.updateProfileData = null
+    }
+  }, [activeTab]) // Include activeTab in dependencies since we use it in the function
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -653,4 +686,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
 })
+
+
 

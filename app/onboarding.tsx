@@ -15,36 +15,41 @@ import { StatusBar } from "expo-status-bar"
 import { useFonts } from "expo-font"
 import { doc, updateDoc, getDoc } from "firebase/firestore"
 import { auth, db } from "./firebase/config"
+import HomeScreen from "./home"
 
 const { width, height } = Dimensions.get("window")
 
-// Define the onboarding screens
+// Define the onboarding screens with positions
 const onboardingScreens = [
   {
     id: "home",
-    title: "Welcome to Volunteer Connect!",
+    title: "Welcome to Volunteer&Connect!",
     description:
       "This is your home page where you can discover and join causes and organizations you're interested in!",
-    highlightArea: "bottomNav",
+    position: "bottom", // Position of the tooltip
+    targetElement: "bottomNav", // Element to point to
   },
   {
     id: "toggle",
-    title: "Explore by causes or organizations",
+    title: "Explore by Causes or organizations",
     description:
       "Toggle here to discover by Causes or Organization, to find your ideal volunteer experience. You can sign up for causes through both, this just speeds up and tailors your search!",
-    highlightArea: "toggle",
+    position: "top", // Position of the tooltip
+    targetElement: "toggle", // Element to point to
   },
   {
     id: "search",
     title: "Search for Causes by Name",
     description: "If you know what cause you're looking for, search the cause name and then filter the results.",
-    highlightArea: "search",
+    position: "top", // Position of the tooltip
+    targetElement: "search", // Element to point to
   },
   {
     id: "explore",
     title: "Browse Recommended Causes",
     description: "Based on your preferences, we've curated some awesome causes that you might be interested in.",
-    highlightArea: "explore",
+    position: "top", // Position of the tooltip
+    targetElement: "explore", // Element to point to
   },
 ]
 
@@ -58,6 +63,8 @@ export default function OnboardingScreen() {
     "Alata-Regular": require("../assets/fonts/Alata-Regular.ttf"),
     "AbhayaLibre-Regular": require("../assets/fonts/AbhayaLibre-Regular.ttf"),
     "AbhayaLibre-ExtraBold": require("../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
+    "Lato-Regular": require("../assets/fonts/Lato-Regular.ttf"),
+    "Lato-Bold": require("../assets/fonts/Lato-Bold.ttf"),
   })
 
   // Check if user has already completed onboarding
@@ -122,335 +129,120 @@ export default function OnboardingScreen() {
     )
   }
 
-  const renderHomeScreen = () => (
-    <View style={styles.screenContainer}>
-      {/* Faded UI */}
-      <View style={styles.fadedContent}>
-        {/* Toggle */}
-        <View style={styles.toggleContainer}>
-          <View style={styles.toggleButton}>
-            <Text style={styles.toggleTextActive}>Cause</Text>
-            <Text style={styles.toggleTextInactive}>Organization</Text>
-          </View>
-        </View>
+  // Get current screen data
+  const currentScreenData = onboardingScreens[currentScreen]
 
-        {/* Search Bar */}
-        <View style={styles.searchBarContainer}>
-          <View style={styles.searchBar}>
-            <Text style={styles.searchText}>Find Volunteer Opportunities</Text>
-          </View>
-        </View>
+  // Custom tooltip rendering based on the current screen
+  const renderTooltip = () => {
+    // Define tooltip styles based on current screen
+    let tooltipContainerStyle = {}
+    const arrowPositionStyle = {}
 
-        {/* Explore Section */}
-        <View style={styles.exploreContainer}>
-          <Text style={styles.exploreTitle}>Explore Near You</Text>
-          <View style={styles.locationRow}>
-            <Text style={styles.locationText}>Kuala Lumpur, KUL</Text>
-            <Text style={styles.updateText}>Update</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Highlighted Bottom Navigation */}
-      <View style={styles.bottomNavContainer}>
-        <View style={styles.bottomNav}>
-          <View style={styles.navItem}>
-            <View style={styles.navIconActive} />
-            <Text style={styles.navTextActive}>Home</Text>
-          </View>
-          <View style={styles.navItem}>
-            <View style={styles.navIcon} />
-            <Text style={styles.navText}>History</Text>
-          </View>
-          <View style={styles.navItem}>
-            <View style={styles.navIcon} />
-            <Text style={styles.navText}>Notifications</Text>
-          </View>
-          <View style={styles.navItem}>
-            <View style={styles.navIcon} />
-            <Text style={styles.navText}>Profile</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Tooltip */}
-      <View style={styles.tooltipContainer}>
-        <Text style={styles.tooltipTitle}>{onboardingScreens[currentScreen].title}</Text>
-        <Text style={styles.tooltipDescription}>{onboardingScreens[currentScreen].description}</Text>
-
-        {/* Pagination */}
-        <View style={styles.paginationContainer}>
-          {onboardingScreens.map((_, index) => (
-            <View key={index} style={[styles.paginationDot, currentScreen === index && styles.paginationDotActive]} />
-          ))}
-        </View>
-
-        {/* Buttons */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-            <Text style={styles.skipButtonText}>Skip</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
-            <Text style={styles.nextButtonText}>Next</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  )
-
-  const renderToggleScreen = () => (
-    <View style={styles.screenContainer}>
-      {/* Faded UI */}
-      <View style={styles.fadedContent}>
-        {/* Search Bar */}
-        <View style={styles.searchBarContainer}>
-          <View style={styles.searchBar}>
-            <Text style={styles.searchText}>Find Volunteer Opportunities</Text>
-          </View>
-        </View>
-
-        {/* Explore Section */}
-        <View style={styles.exploreContainer}>
-          <Text style={styles.exploreTitle}>Explore Near You</Text>
-          <View style={styles.locationRow}>
-            <Text style={styles.locationText}>Kuala Lumpur, KUL</Text>
-            <Text style={styles.updateText}>Update</Text>
-          </View>
-        </View>
-
-        {/* Bottom Navigation */}
-        <View style={styles.bottomNavContainer}>
-          <View style={styles.bottomNav}>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Home</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>History</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Notifications</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Profile</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Highlighted Toggle */}
-      <View style={styles.highlightedToggleContainer}>
-        <View style={styles.toggleButton}>
-          <View style={styles.activeToggle}>
-            <Text style={styles.activeToggleText}>Cause</Text>
-          </View>
-          <View style={styles.inactiveToggle}>
-            <Text style={styles.inactiveToggleText}>Organization</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Tooltip */}
-      <View style={[styles.tooltipContainer, styles.tooltipToggle]}>
-        <Text style={styles.tooltipTitle}>{onboardingScreens[currentScreen].title}</Text>
-        <Text style={styles.tooltipDescription}>{onboardingScreens[currentScreen].description}</Text>
-
-        {/* Pagination */}
-        <View style={styles.paginationContainer}>
-          {onboardingScreens.map((_, index) => (
-            <View key={index} style={[styles.paginationDot, currentScreen === index && styles.paginationDotActive]} />
-          ))}
-        </View>
-
-        {/* Buttons */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-            <Text style={styles.skipButtonText}>Skip</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
-            <Text style={styles.nextButtonText}>Next</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  )
-
-  const renderSearchScreen = () => (
-    <View style={styles.screenContainer}>
-      {/* Faded UI */}
-      <View style={styles.fadedContent}>
-        {/* Toggle */}
-        <View style={styles.toggleContainer}>
-          <View style={styles.toggleButton}>
-            <Text style={styles.toggleTextActive}>Cause</Text>
-            <Text style={styles.toggleTextInactive}>Organization</Text>
-          </View>
-        </View>
-
-        {/* Explore Section */}
-        <View style={styles.exploreContainer}>
-          <Text style={styles.exploreTitle}>Explore Near You</Text>
-          <View style={styles.locationRow}>
-            <Text style={styles.locationText}>Kuala Lumpur, KUL</Text>
-            <Text style={styles.updateText}>Update</Text>
-          </View>
-        </View>
-
-        {/* Bottom Navigation */}
-        <View style={styles.bottomNavContainer}>
-          <View style={styles.bottomNav}>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Home</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>History</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Notifications</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Profile</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Highlighted Search Bar */}
-      <View style={styles.highlightedSearchContainer}>
-        <View style={styles.highlightedSearchBar}>
-          <Text style={styles.highlightedSearchText}>Find Volunteer Opportunities</Text>
-        </View>
-      </View>
-
-      {/* Tooltip */}
-      <View style={[styles.tooltipContainer, styles.tooltipSearch]}>
-        <Text style={styles.tooltipTitle}>{onboardingScreens[currentScreen].title}</Text>
-        <Text style={styles.tooltipDescription}>{onboardingScreens[currentScreen].description}</Text>
-
-        {/* Pagination */}
-        <View style={styles.paginationContainer}>
-          {onboardingScreens.map((_, index) => (
-            <View key={index} style={[styles.paginationDot, currentScreen === index && styles.paginationDotActive]} />
-          ))}
-        </View>
-
-        {/* Buttons */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-            <Text style={styles.skipButtonText}>Skip</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
-            <Text style={styles.nextButtonText}>Next</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  )
-
-  const renderExploreScreen = () => (
-    <View style={styles.screenContainer}>
-      {/* Faded UI */}
-      <View style={styles.fadedContent}>
-        {/* Toggle */}
-        <View style={styles.toggleContainer}>
-          <View style={styles.toggleButton}>
-            <Text style={styles.toggleTextActive}>Cause</Text>
-            <Text style={styles.toggleTextInactive}>Organization</Text>
-          </View>
-        </View>
-
-        {/* Search Bar */}
-        <View style={styles.searchBarContainer}>
-          <View style={styles.searchBar}>
-            <Text style={styles.searchText}>Find Volunteer Opportunities</Text>
-          </View>
-        </View>
-
-        {/* Bottom Navigation */}
-        <View style={styles.bottomNavContainer}>
-          <View style={styles.bottomNav}>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Home</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>History</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Notifications</Text>
-            </View>
-            <View style={styles.navItem}>
-              <View style={styles.navIcon} />
-              <Text style={styles.navText}>Profile</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Highlighted Explore Section */}
-      <View style={styles.highlightedExploreContainer}>
-        <Text style={styles.highlightedExploreTitle}>Explore Near You</Text>
-        <View style={styles.highlightedLocationRow}>
-          <Text style={styles.highlightedLocationText}>Kuala Lumpur, KUL</Text>
-          <Text style={styles.highlightedUpdateText}>Update</Text>
-        </View>
-      </View>
-
-      {/* Tooltip */}
-      <View style={[styles.tooltipContainer, styles.tooltipExplore]}>
-        <Text style={styles.tooltipTitle}>{onboardingScreens[currentScreen].title}</Text>
-        <Text style={styles.tooltipDescription}>{onboardingScreens[currentScreen].description}</Text>
-
-        {/* Pagination */}
-        <View style={styles.paginationContainer}>
-          {onboardingScreens.map((_, index) => (
-            <View key={index} style={[styles.paginationDot, currentScreen === index && styles.paginationDotActive]} />
-          ))}
-        </View>
-
-        {/* Buttons */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-            <Text style={styles.skipButtonText}>Skip</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.finishButton} onPress={completeOnboarding}>
-            <Text style={styles.finishButtonText}>Finish</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </View>
-  )
-
-  // Render the appropriate screen based on current index
-  const renderCurrentScreen = () => {
     switch (currentScreen) {
-      case 0:
-        return renderHomeScreen()
-      case 1:
-        return renderToggleScreen()
-      case 2:
-        return renderSearchScreen()
-      case 3:
-        return renderExploreScreen()
+      case 0: // Home navigation tooltip
+        tooltipContainerStyle = { bottom: 100 }
+        return (
+          <View style={[styles.tooltipContainer, tooltipContainerStyle]}>
+            <View style={styles.tooltip}>
+              {/* Arrow at bottom center */}
+              <View style={[styles.arrow, styles.arrowBottom, { left: width * 0.25 - 30 }]} />
+
+              {/* Tooltip content */}
+              {renderTooltipContent()}
+            </View>
+          </View>
+        )
+
+      case 1: // Toggle tooltip - ADJUSTED TO BE SLIGHTLY LOWER
+        tooltipContainerStyle = { top: 160 } // Increased from 140 to 160 to lower it
+        return (
+          <View style={[styles.tooltipContainer, tooltipContainerStyle]}>
+            <View style={styles.tooltip}>
+              {/* Arrow at top center */}
+              <View style={[styles.arrow, styles.arrowTop, { left: width * 0.5 - 30 }]} />
+
+              {/* Tooltip content */}
+              {renderTooltipContent()}
+            </View>
+          </View>
+        )
+
+      case 2: // Search tooltip
+        tooltipContainerStyle = { top: 210 } // Adjusted to match the new toggle position
+        return (
+          <View style={[styles.tooltipContainer, tooltipContainerStyle]}>
+            <View style={styles.tooltip}>
+              {/* Arrow at top center */}
+              <View style={[styles.arrow, styles.arrowTop, { left: width * 0.5 - 30 }]} />
+
+              {/* Tooltip content */}
+              {renderTooltipContent()}
+            </View>
+          </View>
+        )
+
+      case 3: // Explore tooltip
+        tooltipContainerStyle = { top: 300 } // Adjusted to match the new positions
+        return (
+          <View style={[styles.tooltipContainer, tooltipContainerStyle]}>
+            <View style={styles.tooltip}>
+              {/* Arrow at top center */}
+              <View style={[styles.arrow, styles.arrowTop, { left: width * 0.5 - 30 }]} />
+
+              {/* Tooltip content */}
+              {renderTooltipContent()}
+            </View>
+          </View>
+        )
+
       default:
-        return renderHomeScreen()
+        return null
     }
+  }
+
+  // Tooltip content rendering
+  const renderTooltipContent = () => {
+    return (
+      <View style={styles.tooltipContent}>
+        {/* Skip button in top right */}
+        <View style={styles.skipContainer}>
+          <TouchableOpacity onPress={handleSkip}>
+            <Text style={styles.skipButtonText}>Skip</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.tooltipTitle}>{currentScreenData.title}</Text>
+        <Text style={styles.tooltipDescription}>{currentScreenData.description}</Text>
+
+        {/* Pagination dots - centered */}
+        <View style={styles.paginationContainer}>
+          {onboardingScreens.map((_, index) => (
+            <View key={index} style={[styles.paginationDot, currentScreen === index && styles.paginationDotActive]} />
+          ))}
+        </View>
+
+        {/* Next/Finish button */}
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
+            <Text style={styles.nextButtonText}>
+              {currentScreen === onboardingScreens.length - 1 ? "Finish" : "Next"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    )
   }
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
       <View style={styles.statusBarSpacer} />
-      {renderCurrentScreen()}
+
+      {/* Render the actual home screen in the background */}
+      <HomeScreen />
+
+      {/* Overlay the onboarding tooltip */}
+      <View style={styles.overlayContainer}>{renderTooltip()}</View>
     </SafeAreaView>
   )
 }
@@ -461,150 +253,67 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   statusBarSpacer: {
-    height: Platform.OS === "android" ? RNStatusBar.currentHeight || 40 : 40,
+    height: Platform.OS === "android" ? RNStatusBar.currentHeight || 40 : 0,
   },
-  screenContainer: {
-    flex: 1,
-    position: "relative",
-  },
-  fadedContent: {
-    flex: 1,
-    opacity: 0.3,
-  },
-  toggleContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    alignItems: "center",
-  },
-  toggleButton: {
-    flexDirection: "row",
-    backgroundColor: "#f0f0f0",
-    borderRadius: 25,
-    padding: 4,
-    width: 240,
-  },
-  toggleTextActive: {
-    flex: 1,
-    textAlign: "center",
-    paddingVertical: 8,
-    backgroundColor: "#000",
-    color: "#fff",
-    borderRadius: 25,
-    fontWeight: "bold",
-  },
-  toggleTextInactive: {
-    flex: 1,
-    textAlign: "center",
-    paddingVertical: 8,
-    color: "#666",
-  },
-  searchBarContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 15,
-  },
-  searchBar: {
-    backgroundColor: "#f5f5f5",
-    borderRadius: 25,
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: "#eee",
-  },
-  searchText: {
-    color: "#999",
-    fontSize: 14,
-  },
-  exploreContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-  },
-  exploreTitle: {
-    fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 20,
-    marginBottom: 10,
-  },
-  locationRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  locationText: {
-    fontSize: 14,
-    color: "#666",
-  },
-  updateText: {
-    color: "#15B2BF",
-    fontSize: 14,
-  },
-  bottomNavContainer: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    borderTopWidth: 1,
-    borderTopColor: "#eee",
-    backgroundColor: "#fff",
-  },
-  bottomNav: {
-    flexDirection: "row",
-    height: 70,
-    paddingBottom: 10,
-  },
-  navItem: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingTop: 10,
-  },
-  navIcon: {
-    width: 24,
-    height: 24,
-    backgroundColor: "#ccc",
-    borderRadius: 12,
-    marginBottom: 4,
-  },
-  navIconActive: {
-    width: 24,
-    height: 24,
-    backgroundColor: "#15B2BF",
-    borderRadius: 12,
-    marginBottom: 4,
-  },
-  navText: {
-    fontSize: 12,
-    color: "#666",
-  },
-  navTextActive: {
-    fontSize: 12,
-    color: "#15B2BF",
-    fontWeight: "500",
+  overlayContainer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.1)", // Very light dim
   },
   tooltipContainer: {
     position: "absolute",
-    backgroundColor: "#fff",
-    borderRadius: 15,
+    left: 20,
+    right: 20,
+  },
+  tooltip: {
+    backgroundColor: "white",
+    borderRadius: 20,
     padding: 20,
-    margin: 20,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
     elevation: 5,
+    position: "relative",
+  },
+  arrow: {
+    position: "absolute",
+    width: 20,
+    height: 20,
+    backgroundColor: "white",
+    transform: [{ rotate: "45deg" }],
+    zIndex: 1,
+  },
+  arrowTop: {
+    top: -10,
+  },
+  arrowBottom: {
+    bottom: -10,
+  },
+  tooltipContent: {
+    position: "relative",
+  },
+  skipContainer: {
+    position: "absolute",
+    top: 0,
+    right: 0,
   },
   tooltipTitle: {
-    fontFamily: "AbhayaLibre-ExtraBold",
+    fontFamily: "Lato-Bold",
     fontSize: 18,
     marginBottom: 10,
+    textAlign: "left",
+    paddingRight: 40, // Make room for skip button
   },
   tooltipDescription: {
-    fontFamily: "AbhayaLibre-Regular",
+    fontFamily: "Lato-Regular",
     fontSize: 14,
     color: "#666",
     marginBottom: 20,
+    textAlign: "left",
   },
   paginationContainer: {
     flexDirection: "row",
-    justifyContent: "center",
+    justifyContent: "center", // Center the dots
     marginBottom: 20,
   },
   paginationDot: {
@@ -612,25 +321,18 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: "#ccc",
-    marginHorizontal: 4,
+    marginHorizontal: 4, // Equal spacing on both sides
   },
   paginationDotActive: {
     backgroundColor: "#15B2BF",
-    width: 10,
-    height: 10,
-    borderRadius: 5,
   },
   buttonContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  skipButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 15,
+    alignItems: "flex-end",
   },
   skipButtonText: {
     color: "#666",
     fontSize: 14,
+    fontFamily: "Lato-Regular",
   },
   nextButton: {
     backgroundColor: "#000",
@@ -642,97 +344,7 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 14,
     fontWeight: "bold",
-  },
-  finishButton: {
-    backgroundColor: "#000",
-    paddingVertical: 8,
-    paddingHorizontal: 20,
-    borderRadius: 20,
-  },
-  finishButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "bold",
-  },
-  // Highlighted elements styles
-  highlightedToggleContainer: {
-    position: "absolute",
-    top: 15,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-  },
-  activeToggle: {
-    flex: 1,
-    backgroundColor: "#000",
-    borderRadius: 25,
-    paddingVertical: 8,
-    alignItems: "center",
-  },
-  activeToggleText: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
-  inactiveToggle: {
-    flex: 1,
-    paddingVertical: 8,
-    alignItems: "center",
-  },
-  inactiveToggleText: {
-    color: "#666",
-  },
-  highlightedSearchContainer: {
-    position: "absolute",
-    top: 80,
-    left: 20,
-    right: 20,
-  },
-  highlightedSearchBar: {
-    backgroundColor: "#f5f5f5",
-    borderRadius: 25,
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: "#15B2BF",
-  },
-  highlightedSearchText: {
-    color: "#999",
-    fontSize: 14,
-  },
-  highlightedExploreContainer: {
-    position: "absolute",
-    top: 140,
-    left: 20,
-    right: 20,
-  },
-  highlightedExploreTitle: {
-    fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 20,
-    marginBottom: 10,
-    color: "#000",
-  },
-  highlightedLocationRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  highlightedLocationText: {
-    fontSize: 14,
-    color: "#666",
-  },
-  highlightedUpdateText: {
-    color: "#15B2BF",
-    fontSize: 14,
-  },
-  // Tooltip positioning for different screens
-  tooltipToggle: {
-    top: 100,
-  },
-  tooltipSearch: {
-    top: 150,
-  },
-  tooltipExplore: {
-    top: 200,
+    fontFamily: "Lato-Bold",
   },
 })
 

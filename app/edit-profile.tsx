@@ -17,6 +17,7 @@ import { StatusBar } from "expo-status-bar"
 import { ArrowLeft, Edit2 } from "lucide-react-native"
 import { doc, getDoc, updateDoc } from "firebase/firestore"
 import { auth, db, storage } from "./firebase/config"
+import { updatePassword } from "firebase/auth"
 import { useFonts } from "expo-font"
 import BottomNavigation from "../components/bottom-navigation"
 import * as ImagePicker from "expo-image-picker"
@@ -28,6 +29,7 @@ export default function EditProfileScreen() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
+  const [originalEmail, setOriginalEmail] = useState("")
 
   // Form fields
   const [firstName, setFirstName] = useState("")
@@ -41,6 +43,12 @@ export default function EditProfileScreen() {
   const [editingLastName, setEditingLastName] = useState(false)
   const [editingEmail, setEditingEmail] = useState(false)
   const [editingPhoneNumber, setEditingPhoneNumber] = useState(false)
+
+  // Password editing states
+  const [editingPassword, setEditingPassword] = useState(false)
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [passwordError, setPasswordError] = useState("")
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -65,6 +73,7 @@ export default function EditProfileScreen() {
           setFirstName(data.firstName || "")
           setLastName(data.lastName || "")
           setEmail(data.email || "")
+          setOriginalEmail(data.email || "")
           setPhoneNumber(data.phoneNumber || "")
           setProfileImage(data.photoURL || null)
         } else {
@@ -138,6 +147,11 @@ export default function EditProfileScreen() {
 
       // Update local state
       setProfileImage(downloadURL)
+      // Also update userData to ensure it's included when saving the profile
+      setUserData((prev: any) => ({
+        ...prev,
+        photoURL: downloadURL,
+      }))
 
       Alert.alert("Success", "Profile picture updated successfully")
     } catch (error) {
@@ -160,7 +174,10 @@ export default function EditProfileScreen() {
         return
       }
 
-      // Update user document
+      // Check if email was changed
+      const emailChanged = email !== originalEmail
+
+      // Update user document in Firestore
       await updateDoc(doc(db, "users", userId), {
         firstName,
         lastName,
@@ -168,12 +185,108 @@ export default function EditProfileScreen() {
         phoneNumber,
       })
 
-      Alert.alert("Success", "Profile updated successfully", [{ text: "OK", onPress: () => router.back() }])
+      // Create updated user data to pass back to profile page
+      const updatedUserData = {
+        ...userData,
+        firstName,
+        lastName,
+        email,
+        phoneNumber,
+        photoURL: profileImage, // Add this line to include the profile image
+      }
+
+      // Show appropriate message based on whether email was changed
+      if (emailChanged) {
+        Alert.alert(
+          "Profile Updated",
+          "Your profile has been updated. Note that your display email has changed, but you'll still need to use your original email (" +
+            originalEmail +
+            ") to log in.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                router.back()
+                setTimeout(() => {
+                  if (global.updateProfileData) {
+                    global.updateProfileData(updatedUserData)
+                  }
+                }, 100)
+              },
+            },
+          ],
+        )
+      } else {
+        Alert.alert("Success", "Profile updated successfully", [
+          {
+            text: "OK",
+            onPress: () => {
+              router.back()
+              setTimeout(() => {
+                if (global.updateProfileData) {
+                  global.updateProfileData(updatedUserData)
+                }
+              }, 100)
+            },
+          },
+        ])
+      }
     } catch (error) {
       console.error("Error saving profile:", error)
       Alert.alert("Error", "Failed to update profile")
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleUpdatePassword = async () => {
+    try {
+      // Reset error
+      setPasswordError("")
+
+      // Validate passwords
+      if (newPassword.length < 8) {
+        setPasswordError("Password must be at least 8 characters long")
+        return
+      }
+
+      if (newPassword !== confirmPassword) {
+        setPasswordError("Passwords do not match")
+        return
+      }
+
+      // Check for uppercase, lowercase, number, and special character
+      const hasUppercase = /[A-Z]/.test(newPassword)
+      const hasLowercase = /[a-z]/.test(newPassword)
+      const hasNumber = /[0-9]/.test(newPassword)
+      const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(newPassword)
+
+      if (!hasUppercase || !hasLowercase || !hasNumber || !hasSpecial) {
+        setPasswordError("Password must include uppercase, lowercase, number, and special character")
+        return
+      }
+
+      // Update password in Firebase Authentication
+      const user = auth.currentUser
+      if (!user) {
+        setPasswordError("User not authenticated")
+        return
+      }
+
+      // Remove this line:
+      // const { updatePassword } = await import("firebase/auth")
+
+      // Update the password
+      await updatePassword(user, newPassword)
+
+      // Reset form and show success message
+      setNewPassword("")
+      setConfirmPassword("")
+      setEditingPassword(false)
+      Alert.alert("Success", "Password updated successfully")
+    } catch (error) {
+      console.error("Error updating password:", error)
+      setPasswordError("Failed to update password. You may need to re-authenticate.")
     }
   }
 
@@ -284,6 +397,12 @@ export default function EditProfileScreen() {
                 <Text style={styles.editButtonText}>EDIT</Text>
               </TouchableOpacity>
             </View>
+            {editingEmail && (
+              <Text style={styles.emailWarning}>
+                Note: Changing your email here will only update it in your profile. You'll still need to use your
+                original email to log in.
+              </Text>
+            )}
           </View>
 
           {/* Phone Number */}
@@ -311,18 +430,59 @@ export default function EditProfileScreen() {
           {/* Password */}
           <View style={styles.inputContainer}>
             <Text style={styles.inputLabel}>Password</Text>
-            <View style={styles.inputRow}>
-              <Text style={styles.inputValue}>********</Text>
-              <TouchableOpacity
-                style={styles.editButton}
-                onPress={() =>
-                  Alert.alert("Password Change", "Password change functionality will be implemented later")
-                }
-              >
-                <Text style={styles.editButtonText}>EDIT</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helperText}>(minimum 8 characters)*</Text>
+            {editingPassword ? (
+              <View>
+                <View style={styles.inputRow}>
+                  <TextInput
+                    style={styles.input}
+                    value={newPassword}
+                    onChangeText={setNewPassword}
+                    placeholder="New password"
+                    secureTextEntry
+                  />
+                </View>
+                <View style={[styles.inputRow, { marginTop: 10 }]}>
+                  <TextInput
+                    style={styles.input}
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    placeholder="Confirm password"
+                    secureTextEntry
+                  />
+                </View>
+                {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
+                <View style={styles.passwordButtonsContainer}>
+                  <TouchableOpacity
+                    style={styles.passwordButton}
+                    onPress={() => {
+                      setEditingPassword(false)
+                      setNewPassword("")
+                      setConfirmPassword("")
+                      setPasswordError("")
+                    }}
+                  >
+                    <Text style={styles.passwordButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.passwordButton, styles.savePasswordButton]}
+                    onPress={handleUpdatePassword}
+                  >
+                    <Text style={styles.savePasswordButtonText}>Save</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.helperText}>(minimum 8 characters)*</Text>
+              </View>
+            ) : (
+              <View>
+                <View style={styles.inputRow}>
+                  <Text style={styles.inputValue}>********</Text>
+                  <TouchableOpacity style={styles.editButton} onPress={() => setEditingPassword(true)}>
+                    <Text style={styles.editButtonText}>EDIT</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.helperText}>(minimum 8 characters)*</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -445,6 +605,12 @@ const styles = StyleSheet.create({
     color: "#666",
     marginTop: 5,
   },
+  emailWarning: {
+    fontSize: 12,
+    color: "#FF4757",
+    marginTop: 5,
+    fontStyle: "italic",
+  },
   confirmButton: {
     backgroundColor: "#000",
     borderRadius: 25,
@@ -457,6 +623,36 @@ const styles = StyleSheet.create({
   confirmButtonText: {
     color: "#fff",
     fontSize: 16,
+    fontWeight: "bold",
+  },
+  errorText: {
+    color: "#FF4757",
+    fontSize: 12,
+    marginTop: 5,
+  },
+  passwordButtonsContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 15,
+  },
+  passwordButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    width: "48%",
+    alignItems: "center",
+  },
+  savePasswordButton: {
+    backgroundColor: "#15B2BF",
+    borderColor: "#15B2BF",
+  },
+  passwordButtonText: {
+    color: "#666",
+  },
+  savePasswordButtonText: {
+    color: "#fff",
     fontWeight: "bold",
   },
 })

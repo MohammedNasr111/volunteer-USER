@@ -201,7 +201,7 @@ export default function LocationScreen() {
 
       {/* Title */}
       <Text style={styles.title}>Where are you looking to volunteer?</Text>
-      <Text style={styles.subtitle}>
+      <Text style={[styles.subtitle, { fontFamily: "Alata-Regular" }]}>
         Choose to enable location services to see what volunteer opportunities are in your area.
       </Text>
 
@@ -339,8 +339,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   subtitle: {
-    fontFamily: "AbhayaLibre-Regular",
-    fontSize: 16,
+    fontFamily: "Alata-Regular",
+    fontSize: 14,
     color: "#666",
     marginBottom: 30,
   },
