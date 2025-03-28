@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { Edit2, LogOut, ArrowLeft } from "lucide-react-native"
+import { Edit2, LogOut, ArrowLeft, Info, X } from "lucide-react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { doc, getDoc, updateDoc } from "firebase/firestore"
 import { auth, db, storage } from "./firebase/config"
@@ -23,17 +23,18 @@ import BottomNavigation from "../components/bottom-navigation"
 import OpportunityCard, { type Opportunity } from "../components/opportunity-card"
 import * as ImagePicker from "expo-image-picker"
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
+import { useFocusEffect } from "@react-navigation/native"
 
 // Add a global update function at the top of the file, after imports
 declare global {
   var updateProfileData: ((data: any) => void) | null
 }
 
-// Define the rank system
+// Update the rank system to change the Platinum color to a gradient
 const rankSystem = [
   { name: "Silver", minLevel: 1, maxLevel: 9, colors: ["#C0C0C0", "#E8E8E8"] as readonly [string, string] },
   { name: "Gold", minLevel: 10, maxLevel: 29, colors: ["#FFD700", "#FFC107"] as readonly [string, string] },
-  { name: "Platinum", minLevel: 30, maxLevel: 59, colors: ["#E5E4E2", "#A9A9A9"] as readonly [string, string] },
+  { name: "Platinum", minLevel: 30, maxLevel: 59, colors: ["#4f6e75", "#6e8a91"] as readonly [string, string] },
   { name: "Emerald", minLevel: 60, maxLevel: 89, colors: ["#50C878", "#2E8B57"] as readonly [string, string] },
   { name: "Ruby", minLevel: 90, maxLevel: 129, colors: ["#E0115F", "#9B111E"] as readonly [string, string] },
   { name: "Diamond", minLevel: 130, maxLevel: 179, colors: ["#B9F2FF", "#1E90FF"] as readonly [string, string] },
@@ -57,34 +58,7 @@ export default function ProfileScreen() {
   const [experienceLevel, setExperienceLevel] = useState(0)
   const [rank, setRank] = useState(rankSystem[0])
   const [uploadingImage, setUploadingImage] = useState(false)
-
-  // In the ProfileScreen component, add this inside the component but outside any other functions:
-  useEffect(() => {
-    // Create a global function that the edit profile page can call to update our state
-    global.updateProfileData = (newData) => {
-      setUserData(newData)
-
-      // Also update other derived state
-      if (newData.registered_opportunities) {
-        const level = newData.registered_opportunities.length * 2
-        setExperienceLevel(level)
-
-        // Determine rank based on level
-        const userRank = rankSystem.find((r) => level >= r.minLevel && level <= r.maxLevel) || rankSystem[0]
-        setRank(userRank)
-      }
-
-      // Refresh opportunities if needed
-      if (auth.currentUser?.uid) {
-        fetchOpportunities(auth.currentUser.uid, activeTab)
-      }
-    }
-
-    // Clean up the global function when component unmounts
-    return () => {
-      global.updateProfileData = null
-    }
-  }, [activeTab]) // Include activeTab in dependencies since we use it in the function
+  const [showRankInfo, setShowRankInfo] = useState(false)
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -93,47 +67,7 @@ export default function ProfileScreen() {
     "AbhayaLibre-ExtraBold": require("../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
   })
 
-  useEffect(() => {
-    const fetchUserData = async () => {
-      try {
-        const userId = auth.currentUser?.uid
-        if (!userId) {
-          router.replace("/login")
-          return
-        }
-
-        const userDoc = await getDoc(doc(db, "users", userId))
-        if (userDoc.exists()) {
-          const data = userDoc.data()
-          setUserData(data)
-
-          // Calculate experience level based on registered opportunities
-          // Each opportunity gives 2 points
-          const registeredOpportunities = data.registered_opportunities || []
-          const level = registeredOpportunities.length * 2
-          setExperienceLevel(level)
-
-          // Determine rank based on level
-          const userRank = rankSystem.find((r) => level >= r.minLevel && level <= r.maxLevel) || rankSystem[0]
-          setRank(userRank)
-
-          // Fetch opportunities based on active tab
-          fetchOpportunities(userId, activeTab)
-        } else {
-          console.error("User document not found")
-          router.replace("/login")
-        }
-      } catch (error) {
-        console.error("Error fetching user data:", error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchUserData()
-  }, [router])
-
-  const fetchOpportunities = async (userId: string, tabType: string) => {
+  const fetchOpportunities = useCallback(async (userId: string, tabType: string) => {
     try {
       setLoadingOpportunities(true)
       let opportunitiesList: Opportunity[] = []
@@ -165,8 +99,10 @@ export default function ProfileScreen() {
                     city: oppData.city || "",
                     volunteers: oppData.volunteers || "0",
                     organizationName: oppData.organizationName || "",
+                    organizationLogo: oppData.organizationLogo || "",
                     description: oppData.description || "",
                     registeredCount: oppData.registeredCount || 0,
+                    createdBy: oppData.createdBy || "", // Add createdBy field
                   }
                 }
               }
@@ -199,8 +135,10 @@ export default function ProfileScreen() {
                   city: oppData.city || "",
                   volunteers: oppData.volunteers || "0",
                   organizationName: oppData.organizationName || "",
+                  organizationLogo: oppData.organizationLogo || "",
                   description: oppData.description || "",
                   registeredCount: oppData.registeredCount || 0,
+                  createdBy: oppData.createdBy || "", // Add createdBy field
                 }
               }
               return null
@@ -218,7 +156,95 @@ export default function ProfileScreen() {
     } finally {
       setLoadingOpportunities(false)
     }
+  }, [])
+
+  // In the ProfileScreen component, add this inside the component but outside any other functions:
+  useEffect(() => {
+    // Create a global function that the edit profile page can call to update our state
+    global.updateProfileData = (newData) => {
+      // Only update if the data is different to prevent unnecessary re-renders
+      setUserData((prevData: any) => {
+        if (JSON.stringify(prevData) === JSON.stringify(newData)) {
+          return prevData // No change needed
+        }
+        return newData
+      })
+
+      // Also update other derived state
+      if (newData.registered_opportunities) {
+        const level = newData.registered_opportunities.length * 2
+        setExperienceLevel(level)
+
+        // Determine rank based on level
+        const userRank = rankSystem.find((r) => level >= r.minLevel && level <= r.maxLevel) || rankSystem[0]
+        setRank(userRank)
+      }
+
+      // Refresh opportunities if needed
+      if (auth.currentUser?.uid) {
+        fetchOpportunities(auth.currentUser.uid, activeTab)
+      }
+    }
+
+    // Clean up the global function when component unmounts
+    return () => {
+      global.updateProfileData = null
+    }
+  }, [activeTab, fetchOpportunities]) // Include activeTab in dependencies since we use it in the function
+
+  const fetchUserData = async () => {
+    try {
+      const userId = auth.currentUser?.uid
+      if (!userId) {
+        router.replace("/login")
+        return
+      }
+
+      const userDoc = await getDoc(doc(db, "users", userId))
+      if (userDoc.exists()) {
+        const data = userDoc.data()
+        setUserData(data)
+
+        // Calculate experience level based on registered opportunities
+        // Each opportunity gives 2 points
+        const registeredOpportunities = data.registered_opportunities || []
+        const level = registeredOpportunities.length * 2
+        setExperienceLevel(level)
+
+        // Determine rank based on level
+        const userRank = rankSystem.find((r) => level >= r.minLevel && level <= r.maxLevel) || rankSystem[0]
+        setRank(userRank)
+
+        // Fetch opportunities based on active tab
+        fetchOpportunities(userId, activeTab)
+      } else {
+        console.error("User document not found")
+        router.replace("/login")
+      }
+    } catch (error) {
+      console.error("Error fetching user data:", error)
+    } finally {
+      setLoading(false)
+    }
   }
+
+  useEffect(() => {
+    fetchUserData()
+  }, [router, fetchOpportunities, activeTab])
+
+  // Add this useEffect to refresh data when the screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      console.log("Profile screen focused - refreshing data")
+      // Only fetch opportunities when the screen is focused, not the full user data
+      if (auth.currentUser?.uid) {
+        fetchOpportunities(auth.currentUser.uid, activeTab)
+      }
+      return () => {
+        // Cleanup function when screen loses focus (optional)
+      }
+    }, [fetchOpportunities, activeTab]),
+  )
 
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId)
@@ -318,6 +344,10 @@ export default function ProfileScreen() {
     }
   }
 
+  const toggleRankInfo = () => {
+    setShowRankInfo(!showRankInfo)
+  }
+
   if (!fontsLoaded || loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -379,7 +409,12 @@ export default function ProfileScreen() {
         <View style={styles.statDivider} />
 
         <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Rank:</Text>
+          <Text style={styles.statLabel}>
+            Rank:
+            <TouchableOpacity onPress={toggleRankInfo} style={styles.infoIconButton}>
+              <Info size={14} color="#fff" />
+            </TouchableOpacity>
+          </Text>
           <LinearGradient colors={rank.colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.rankBadge}>
             <Text style={styles.rankText}>{rank.name}</Text>
           </LinearGradient>
@@ -439,12 +474,49 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       )}
 
+      {/* Rank Info Modal */}
+      {showRankInfo && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Rank System</Text>
+              <TouchableOpacity style={styles.closeButton} onPress={toggleRankInfo}>
+                <X size={20} color="#000" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalSubtitle}>Earn ranks by participating in volunteer opportunities</Text>
+
+            <ScrollView style={styles.ranksList}>
+              {rankSystem.map((rankItem, index) => (
+                <View key={index} style={styles.rankItem}>
+                  <LinearGradient
+                    colors={rankItem.colors}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.rankItemBadge}
+                  >
+                    <Text style={styles.rankItemText}>{rankItem.name}</Text>
+                  </LinearGradient>
+                  <Text style={styles.rankItemLevel}>
+                    Level {rankItem.minLevel} - {rankItem.maxLevel}
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
+
+            <Text style={styles.modalFooter}>Each volunteer opportunity completed earns you 2 experience points</Text>
+          </View>
+        </View>
+      )}
+
       {/* Bottom Navigation */}
       <BottomNavigation activeTab="profile" />
     </SafeAreaView>
   )
 }
 
+// Update the statsContainer style to use the new background color
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -537,26 +609,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 20,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: "#eee",
-    borderRadius: 8,
-    marginHorizontal: 20,
-    paddingVertical: 10,
+    paddingVertical: 15,
+    backgroundColor: "#15B2BF", // Changed from #93c3c7 to #15B2BF
   },
   statItem: {
     flexDirection: "row",
     alignItems: "center",
   },
   statDivider: {
-    width: 20,
+    width: 1,
+    height: 20,
+    backgroundColor: "#fff",
+    marginHorizontal: 15,
   },
   statLabel: {
     fontSize: 14,
     marginRight: 8,
+    color: "#fff", // Changed to white for better contrast
   },
   levelContainer: {
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "#fff", // Changed to white
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -564,7 +636,7 @@ const styles = StyleSheet.create({
   levelText: {
     fontSize: 14,
     fontWeight: "bold",
-    color: "#333",
+    color: "#15B2BF", // Changed to match the background for nice contrast
   },
   rankBadge: {
     paddingHorizontal: 10,
@@ -685,7 +757,97 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
   },
+  infoIconButton: {
+    marginLeft: 5,
+    padding: 2,
+  },
+  modalOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  },
+  modalContainer: {
+    width: "85%",
+    backgroundColor: "#fff",
+    borderRadius: 15,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    maxHeight: "70%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 15,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  modalTitle: {
+    fontFamily: "AbhayaLibre-ExtraBold",
+    fontSize: 22,
+    color: "#15B2BF",
+  },
+  closeButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#f0f0f0",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 15,
+  },
+  ranksList: {
+    maxHeight: 300,
+  },
+  rankItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f5f5f5",
+  },
+  rankItemBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    minWidth: 100,
+    alignItems: "center",
+  },
+  rankItemText: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#fff",
+    textShadowColor: "rgba(0, 0, 0, 0.3)",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+  },
+  rankItemLevel: {
+    fontSize: 14,
+    color: "#333",
+  },
+  modalFooter: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
+    marginTop: 15,
+    textAlign: "center",
+  },
 })
-
-
 

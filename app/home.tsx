@@ -13,19 +13,56 @@ import {
 import { useRouter, useFocusEffect } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { Search, MapPin } from "lucide-react-native"
-import { collection, query, getDocs, getDoc, doc, where } from "firebase/firestore"
+import {
+  collection,
+  query,
+  getDocs,
+  getDoc,
+  doc,
+  where,
+  type DocumentData,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore"
 import { auth, db } from "./firebase/config"
 import { useFonts } from "expo-font"
 import BottomNavigation from "../components/bottom-navigation"
 import OpportunityCard, { type Opportunity } from "../components/opportunity-card"
 import CauseCard, { type Cause } from "../components/cause-card"
 import LocationCard, { type Location } from "../components/location-card"
+import NGOFooter from "../components/ngo-footer"
+import OrganizationCard, { type Organization } from "../components/organization-card"
 
 // Define the tab options
 const tabs = [
   { id: "causes", label: "Causes" },
   { id: "organization", label: "Organization" },
 ]
+
+// Define types for Firestore data
+interface CauseData {
+  name?: string
+  imageUrl?: string
+  date?: string
+  time?: string
+  city?: string
+  volunteers?: string
+  organizationName?: string
+  organizationLogo?: string
+  createdBy?: string
+  description?: string
+  registeredCount?: number
+  createdAt?: string
+  causeTypes?: string[]
+  registered_users?: string[]
+}
+
+interface OrgData {
+  organizationName?: string
+  photoURL?: string
+  organizationDescription?: string
+  location?: string
+  verified?: boolean
+}
 
 export default function HomeScreen() {
   const router = useRouter()
@@ -38,6 +75,8 @@ export default function HomeScreen() {
   const [cities, setCities] = useState<Location[]>([])
   const [userCauses, setUserCauses] = useState<Cause[]>([])
   const [isFiltered, setIsFiltered] = useState(false)
+  const [organizations, setOrganizations] = useState<Organization[]>([])
+  const [loadingOrganizations, setLoadingOrganizations] = useState(false)
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -45,6 +84,47 @@ export default function HomeScreen() {
     "AbhayaLibre-Regular": require("../assets/fonts/AbhayaLibre-Regular.ttf"),
     "AbhayaLibre-ExtraBold": require("../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
   })
+
+  // Function to fetch organizations
+  const fetchOrganizations = useCallback(async () => {
+    try {
+      setLoadingOrganizations(true)
+
+      // Fetch organizations from the admins collection
+      const orgsQuery = query(collection(db, "admins"))
+      const orgsSnapshot = await getDocs(orgsQuery)
+
+      const orgsData = await Promise.all(
+        orgsSnapshot.docs.map(async (docSnapshot) => {
+          const data = docSnapshot.data() as OrgData
+
+          // Count causes for this organization
+          const causesQuery = query(collection(db, "causes"), where("createdBy", "==", docSnapshot.id))
+          const causesSnapshot = await getDocs(causesQuery)
+
+          return {
+            id: docSnapshot.id,
+            name: data.organizationName || "Unknown Organization",
+            logo: data.photoURL || null,
+            description: data.organizationDescription || "No description available",
+            location: data.location || null,
+            verified: data.verified || false,
+            causesCount: causesSnapshot.docs.length,
+          } as Organization
+        }),
+      )
+
+      // Sort organizations by causesCount (most active first)
+      orgsData.sort((a: Organization, b: Organization) => (b.causesCount || 0) - (a.causesCount || 0))
+
+      setOrganizations(orgsData)
+    } catch (error) {
+      console.error("Error fetching organizations:", error)
+      setOrganizations([])
+    } finally {
+      setLoadingOrganizations(false)
+    }
+  }, [])
 
   // Function to fetch opportunities based on user preferences
   const fetchOpportunities = useCallback(async () => {
@@ -82,74 +162,87 @@ export default function HomeScreen() {
         const newOppsSnapshot = await getDocs(newOppsQuery)
         console.log(`Retrieved ${newOppsSnapshot.docs.length} total causes documents`)
 
-        // Log the first few documents to see their structure
-        newOppsSnapshot.docs.slice(0, 3).forEach((doc) => {
-          console.log("Sample cause document:", {
-            id: doc.id,
-            causeTypes: doc.data().causeTypes,
-            name: doc.data().name,
-          })
-        })
-
         // Now filter in memory based on cause types
-        const newOppsData = newOppsSnapshot.docs
-          .filter((doc) => {
-            const data = doc.data()
-            const docCauseTypes = data.causeTypes || []
+        const newOppsData = await Promise.all(
+          newOppsSnapshot.docs
+            .filter((docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+              const data = docSnapshot.data() as CauseData
+              const docCauseTypes = data.causeTypes || []
 
-            // Check if any of the user's preferences match this document's cause types
-            // Use case-insensitive comparison
-            const hasMatchingCause = userCausePreferences.some((pref) => {
-              return docCauseTypes.some(
-                (docType: string) => typeof docType === "string" && docType.toLowerCase() === pref.toLowerCase(),
-              )
+              // Check if any of the user's preferences match this document's cause types
+              // Use case-insensitive comparison
+              const hasMatchingCause = userCausePreferences.some((pref) => {
+                return docCauseTypes.some(
+                  (docType: string) => typeof docType === "string" && docType.toLowerCase() === pref.toLowerCase(),
+                )
+              })
+
+              if (hasMatchingCause) {
+                console.log(`Document ${docSnapshot.id} matches user preferences`)
+              }
+
+              return hasMatchingCause
             })
+            .map(async (docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+              const data = docSnapshot.data() as CauseData
+              // Parse the date string to a Date object
+              let opportunityDate: Date | null = null
+              try {
+                opportunityDate = data.date ? new Date(data.date) : null
+              } catch (e) {
+                opportunityDate = null
+              }
 
-            if (hasMatchingCause) {
-              console.log(`Document ${doc.id} matches user preferences`)
-            }
+              // Only include future opportunities
+              if (opportunityDate && opportunityDate < now) {
+                return null // Skip past opportunities
+              }
 
-            return hasMatchingCause
-          })
-          .map((doc) => {
-            const data = doc.data()
-            // Parse the date string to a Date object
-            let opportunityDate
-            try {
-              opportunityDate = data.date ? new Date(data.date) : null
-            } catch (e) {
-              opportunityDate = null
-            }
+              // Fetch organization data if createdBy is available
+              let orgName = data.organizationName || ""
+              let orgLogo = data.organizationLogo || ""
 
-            // Only include future opportunities
-            const now = new Date()
-            if (opportunityDate && opportunityDate < now) {
-              return null // Skip past opportunities
-            }
+              if (data.createdBy && (!orgName || !orgLogo)) {
+                try {
+                  const orgDoc = await getDoc(doc(db, "admins", data.createdBy))
+                  if (orgDoc.exists()) {
+                    const orgData = orgDoc.data() as OrgData
+                    if (!orgName && orgData.organizationName) {
+                      orgName = orgData.organizationName
+                    }
+                    if (!orgLogo && orgData.photoURL) {
+                      orgLogo = orgData.photoURL
+                    }
+                  }
+                } catch (error) {
+                  console.error("Error fetching organization data:", error)
+                }
+              }
 
-            return {
-              id: doc.id,
-              name: data.name || "",
-              imageUrl: data.imageUrl || "",
-              date: data.date || "",
-              time: data.time || "",
-              city: data.city || "",
-              volunteers: data.volunteers || "0",
-              organizationName: data.organizationName || "",
-              description: data.description || "",
-              registeredCount: data.registeredCount || 0,
-              createdAt: data.createdAt || "",
-            }
-          })
-          .filter(Boolean) // Remove null entries (past opportunities)
+              return {
+                id: docSnapshot.id,
+                name: data.name || "",
+                imageUrl: data.imageUrl || "",
+                date: data.date || "",
+                time: data.time || "",
+                city: data.city || "",
+                volunteers: data.volunteers || "0",
+                organizationName: orgName,
+                organizationLogo: orgLogo,
+                createdBy: data.createdBy || "",
+                description: data.description || "",
+                registeredCount: data.registeredCount || 0,
+                createdAt: data.createdAt || "",
+              } as Opportunity
+            }),
+        )
+
+        // Filter out null entries and sort
+        const filteredNewOppsData = newOppsData.filter(Boolean) as Opportunity[]
 
         // Sort the results in memory
-        newOppsData.sort((a, b) => {
-          // If either a or b is null, handle it gracefully
-          if (a === null && b === null) return 0
-          if (a === null) return 1 // null values go last
-          if (b === null) return -1
-
+        filteredNewOppsData.sort((a, b) => {
+          if (!a || !b) return 0
           // Sort by createdAt in descending order (newest first)
           const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0
           const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0
@@ -157,68 +250,91 @@ export default function HomeScreen() {
         })
 
         // Limit to 4 items after sorting
-        setNewOpportunities(newOppsData.slice(0, 4) as Opportunity[])
-        console.log(`Filtered to ${newOppsData.length} matching opportunities`)
+        setNewOpportunities(filteredNewOppsData.slice(0, 4))
+        console.log(`Filtered to ${filteredNewOppsData.length} matching opportunities`)
 
         // Do the same for popular opportunities
-        // This is a simplified version - you can expand this as needed
         const popularOppsSnapshot = await getDocs(popularOppsQuery)
-        const popularOppsData = popularOppsSnapshot.docs
-          .filter((doc) => {
-            const data = doc.data()
-            const docCauseTypes = data.causeTypes || []
+        const popularOppsData = await Promise.all(
+          popularOppsSnapshot.docs
+            .filter((docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+              const data = docSnapshot.data() as CauseData
+              const docCauseTypes = data.causeTypes || []
 
-            // Check if any of the user's preferences match this document's cause types
-            return userCausePreferences.some((pref) =>
-              docCauseTypes.some(
-                (docType: string) => typeof docType === "string" && docType.toLowerCase() === pref.toLowerCase(),
-              ),
-            )
-          })
-          .map((doc) => {
-            // Same mapping logic as above
-            const data = doc.data()
-            let opportunityDate
-            try {
-              opportunityDate = data.date ? new Date(data.date) : null
-            } catch (e) {
-              opportunityDate = null
-            }
+              // Check if any of the user's preferences match this document's cause types
+              return userCausePreferences.some((pref) =>
+                docCauseTypes.some(
+                  (docType: string) => typeof docType === "string" && docType.toLowerCase() === pref.toLowerCase(),
+                ),
+              )
+            })
+            .map(async (docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+              // Same mapping logic as above
+              const data = docSnapshot.data() as CauseData
+              let opportunityDate: Date | null = null
+              try {
+                opportunityDate = data.date ? new Date(data.date) : null
+              } catch (e) {
+                opportunityDate = null
+              }
 
-            const now = new Date()
-            if (opportunityDate && opportunityDate < now) {
-              return null
-            }
+              if (opportunityDate && opportunityDate < now) {
+                return null
+              }
 
-            return {
-              id: doc.id,
-              name: data.name || "",
-              imageUrl: data.imageUrl || "",
-              date: data.date || "",
-              time: data.time || "",
-              city: data.city || "",
-              volunteers: data.volunteers || "0",
-              organizationName: data.organizationName || "",
-              description: data.description || "",
-              registeredCount: data.registeredCount || 0,
-            }
-          })
-          .filter(Boolean)
+              // Fetch organization data if createdBy is available
+              let orgName = data.organizationName || ""
+              let orgLogo = data.organizationLogo || ""
+
+              if (data.createdBy && (!orgName || !orgLogo)) {
+                try {
+                  const orgDoc = await getDoc(doc(db, "admins", data.createdBy))
+                  if (orgDoc.exists()) {
+                    const orgData = orgDoc.data() as OrgData
+                    if (!orgName && orgData.organizationName) {
+                      orgName = orgData.organizationName
+                    }
+                    if (!orgLogo && orgData.photoURL) {
+                      orgLogo = orgData.photoURL
+                    }
+                  }
+                } catch (error) {
+                  console.error("Error fetching organization data:", error)
+                }
+              }
+
+              return {
+                id: docSnapshot.id,
+                name: data.name || "",
+                imageUrl: data.imageUrl || "",
+                date: data.date || "",
+                time: data.time || "",
+                city: data.city || "",
+                volunteers: data.volunteers || "0",
+                organizationName: orgName,
+                organizationLogo: orgLogo,
+                createdBy: data.createdBy || "",
+                description: data.description || "",
+                registeredCount: data.registeredCount || 0,
+                createdAt: data.createdAt || "",
+              } as Opportunity
+            }),
+        )
+
+        // Filter out null entries and sort
+        const filteredPopularOppsData = popularOppsData.filter(Boolean) as Opportunity[]
 
         // Sort by volunteers count in memory
-        popularOppsData.sort((a, b) => {
-          if (a === null && b === null) return 0
-          if (a === null) return 1
-          if (b === null) return -1
-
+        filteredPopularOppsData.sort((a, b) => {
+          if (!a || !b) return 0
           const volunteersA = Number.parseInt(a.volunteers || "0")
           const volunteersB = Number.parseInt(b.volunteers || "0")
           return volunteersB - volunteersA
         })
 
-        setPopularOpportunities(popularOppsData.slice(0, 4) as Opportunity[])
+        setPopularOpportunities(filteredPopularOppsData.slice(0, 4))
       } else {
-        // If no preferences, show all opportunities - keep this part as is
+        // If no preferences, show all opportunities
         newOppsQuery = query(collection(db, "causes"))
         popularOppsQuery = query(collection(db, "causes"))
         console.log("No user preferences found, showing all opportunities")
@@ -226,11 +342,12 @@ export default function HomeScreen() {
         // Fetch new opportunities
         const newOppsSnapshot = await getDocs(newOppsQuery)
         console.log(`Retrieved ${newOppsSnapshot.docs.length} documents from new opportunities query`)
-        const newOppsData = newOppsSnapshot.docs
-          .map((doc) => {
-            const data = doc.data()
+
+        const newOppsData = await Promise.all(
+          newOppsSnapshot.docs.map(async (docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+            const data = docSnapshot.data() as CauseData
             // Parse the date string to a Date object
-            let opportunityDate
+            let opportunityDate: Date | null = null
             try {
               opportunityDate = data.date ? new Date(data.date) : null
             } catch (e) {
@@ -242,29 +359,51 @@ export default function HomeScreen() {
               return null // Skip past opportunities
             }
 
+            // Fetch organization data if createdBy is available
+            let orgName = data.organizationName || ""
+            let orgLogo = data.organizationLogo || ""
+
+            if (data.createdBy && (!orgName || !orgLogo)) {
+              try {
+                const orgDoc = await getDoc(doc(db, "admins", data.createdBy))
+                if (orgDoc.exists()) {
+                  const orgData = orgDoc.data() as OrgData
+                  if (!orgName && orgData.organizationName) {
+                    orgName = orgData.organizationName
+                  }
+                  if (!orgLogo && orgData.photoURL) {
+                    orgLogo = orgData.photoURL
+                  }
+                }
+              } catch (error) {
+                console.error("Error fetching organization data:", error)
+              }
+            }
+
             return {
-              id: doc.id,
+              id: docSnapshot.id,
               name: data.name || "",
               imageUrl: data.imageUrl || "",
               date: data.date || "",
               time: data.time || "",
               city: data.city || "",
               volunteers: data.volunteers || "0",
-              organizationName: data.organizationName || "",
+              organizationName: orgName,
+              organizationLogo: orgLogo,
+              createdBy: data.createdBy || "",
               description: data.description || "",
               registeredCount: data.registeredCount || 0,
               createdAt: data.createdAt || "",
-            }
-          })
-          .filter(Boolean) // Remove null entries (past opportunities)
+            } as Opportunity
+          }),
+        )
 
-        // Sort the results in memory instead of in the query
-        newOppsData.sort((a, b) => {
-          // If either a or b is null, handle it gracefully
-          if (a === null && b === null) return 0
-          if (a === null) return 1 // null values go last
-          if (b === null) return -1
+        // Filter out null entries and sort
+        const filteredNewOppsData = newOppsData.filter(Boolean) as Opportunity[]
 
+        // Sort the results in memory
+        filteredNewOppsData.sort((a, b) => {
+          if (!a || !b) return 0
           // Sort by createdAt in descending order (newest first)
           const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0
           const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0
@@ -272,16 +411,17 @@ export default function HomeScreen() {
         })
 
         // Limit to 4 items after sorting
-        setNewOpportunities(newOppsData.slice(0, 4) as Opportunity[])
+        setNewOpportunities(filteredNewOppsData.slice(0, 4))
 
         // Fetch popular opportunities
         const popularOppsSnapshot = await getDocs(popularOppsQuery)
         console.log(`Retrieved ${popularOppsSnapshot.docs.length} documents from popular opportunities query`)
-        const popularOppsData = popularOppsSnapshot.docs
-          .map((doc) => {
-            const data = doc.data()
+
+        const popularOppsData = await Promise.all(
+          popularOppsSnapshot.docs.map(async (docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+            const data = docSnapshot.data() as CauseData
             // Parse the date string to a Date object
-            let opportunityDate
+            let opportunityDate: Date | null = null
             try {
               opportunityDate = data.date ? new Date(data.date) : null
             } catch (e) {
@@ -293,35 +433,58 @@ export default function HomeScreen() {
               return null // Skip past opportunities
             }
 
+            // Fetch organization data if createdBy is available
+            let orgName = data.organizationName || ""
+            let orgLogo = data.organizationLogo || ""
+
+            if (data.createdBy && (!orgName || !orgLogo)) {
+              try {
+                const orgDoc = await getDoc(doc(db, "admins", data.createdBy))
+                if (orgDoc.exists()) {
+                  const orgData = orgDoc.data() as OrgData
+                  if (!orgName && orgData.organizationName) {
+                    orgName = orgData.organizationName
+                  }
+                  if (!orgLogo && orgData.photoURL) {
+                    orgLogo = orgData.photoURL
+                  }
+                }
+              } catch (error) {
+                console.error("Error fetching organization data:", error)
+              }
+            }
+
             return {
-              id: doc.id,
+              id: docSnapshot.id,
               name: data.name || "",
               imageUrl: data.imageUrl || "",
               date: data.date || "",
               time: data.time || "",
               city: data.city || "",
               volunteers: data.volunteers || "0",
-              organizationName: data.organizationName || "",
+              organizationName: orgName,
+              organizationLogo: orgLogo,
+              createdBy: data.createdBy || "",
               description: data.description || "",
               registeredCount: data.registeredCount || 0,
-            }
-          })
-          .filter(Boolean) // Remove null entries (past opportunities)
+              createdAt: data.createdAt || "",
+            } as Opportunity
+          }),
+        )
+
+        // Filter out null entries and sort
+        const filteredPopularOppsData = popularOppsData.filter(Boolean) as Opportunity[]
 
         // Sort by volunteers count in memory
-        popularOppsData.sort((a, b) => {
-          // If either a or b is null, handle it gracefully
-          if (a === null && b === null) return 0
-          if (a === null) return 1 // null values go last
-          if (b === null) return -1
-
+        filteredPopularOppsData.sort((a, b) => {
+          if (!a || !b) return 0
           const volunteersA = Number.parseInt(a.volunteers || "0")
           const volunteersB = Number.parseInt(b.volunteers || "0")
           return volunteersB - volunteersA
         })
 
         // Limit to 4 items after sorting
-        setPopularOpportunities(popularOppsData.slice(0, 4) as Opportunity[])
+        setPopularOpportunities(filteredPopularOppsData.slice(0, 4))
       }
 
       setIsFiltered(userCausePreferences.length > 0)
@@ -332,7 +495,7 @@ export default function HomeScreen() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [auth.currentUser?.uid])
 
   // Function to fetch cities
   const fetchCities = useCallback(async () => {
@@ -371,9 +534,6 @@ export default function HomeScreen() {
         }
       }
 
-      // Let's also update the fetchCities function to use a similar approach
-      // Replace the existing city query with this:
-
       // For each city, count opportunities in that location that match user preferences
       const citiesWithCounts = await Promise.all(
         Object.keys(cityImages).map(async (cityName) => {
@@ -384,8 +544,8 @@ export default function HomeScreen() {
           console.log(`City ${cityName}: Retrieved ${snapshot.docs.length} total opportunities`)
 
           // Filter to only include current and future opportunities that match user preferences
-          const currentOpportunities = snapshot.docs.filter((doc) => {
-            const data = doc.data()
+          const currentOpportunities = snapshot.docs.filter((docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+            const data = docSnapshot.data() as CauseData
 
             // Check date first
             try {
@@ -423,7 +583,7 @@ export default function HomeScreen() {
       )
 
       // Sort cities by opportunity count (highest first)
-      citiesWithCounts.sort((a, b) => {
+      citiesWithCounts.sort((a: Location, b: Location) => {
         const countA = Number.parseInt(a.count.split(" ")[0])
         const countB = Number.parseInt(b.count.split(" ")[0])
         return countB - countA
@@ -435,7 +595,7 @@ export default function HomeScreen() {
       console.error("Error fetching cities:", error)
       setCities([])
     }
-  }, [])
+  }, [auth.currentUser?.uid])
 
   // Function to fetch user causes
   const fetchUserCauses = useCallback(async () => {
@@ -447,8 +607,8 @@ export default function HomeScreen() {
         if (userDoc.exists()) {
           const userData = userDoc.data()
           if (userData.cause_preferences && userData.cause_preferences.length > 0) {
-            // Map cause names to your existing image assets
-            const causeImageMap: { [key: string]: any } = {
+            // Create a proper mapping of cause IDs to images
+            const causeImageMap: Record<string, any> = {
               environment: require("../assets/images/Environment.png"),
               technology: require("../assets/images/Technology.png"),
               community: require("../assets/images/Community.png"),
@@ -466,13 +626,33 @@ export default function HomeScreen() {
               race: require("../assets/images/Race.png"),
             }
 
-            // Convert user preferences to cause objects
+            // Convert user preferences to cause objects with proper image mapping
             const userCausePrefs = userData.cause_preferences.map((causeId: string) => {
-              // Map cause ID to a proper name
-              const causeName = causeId.charAt(0).toUpperCase() + causeId.slice(1).replace(/_/g, " ")
+              // Normalize the cause ID to lowercase for consistent lookup
+              const normalizedCauseId = causeId.toLowerCase()
 
-              // Use a default image if the specific cause image isn't available
-              const causeImage = causeImageMap[causeId] || require("../assets/images/placeholder.png")
+              // Map cause ID to a proper name with correct capitalization and formatting
+              let causeName = ""
+              switch (normalizedCauseId) {
+                case "arts":
+                  causeName = "Arts & Culture"
+                  break
+                case "sports":
+                  causeName = "Sports & Recreation"
+                  break
+                case "disaster":
+                  causeName = "Disaster Relief"
+                  break
+                case "race":
+                  causeName = "Race & Ethnicity"
+                  break
+                default:
+                  // Default capitalization for other causes
+                  causeName = normalizedCauseId.charAt(0).toUpperCase() + normalizedCauseId.slice(1)
+              }
+
+              // Use the normalized cause ID to look up the image
+              const causeImage = causeImageMap[normalizedCauseId] || require("../assets/images/placeholder.png")
 
               return {
                 id: causeId,
@@ -491,26 +671,30 @@ export default function HomeScreen() {
       console.error("Error fetching user causes:", error)
       setUserCauses([])
     }
-  }, [])
+  }, [auth.currentUser?.uid])
 
   // Function to refresh all data
   const refreshData = useCallback(async () => {
     setLoading(true)
     try {
-      await Promise.all([fetchUserCauses(), fetchOpportunities(), fetchCities()])
+      if (activeTab === "causes") {
+        await Promise.all([fetchUserCauses(), fetchOpportunities(), fetchCities()])
+      } else {
+        await fetchOrganizations()
+      }
     } catch (error) {
       console.error("Error refreshing data:", error)
     } finally {
       setLoading(false)
     }
-  }, [fetchUserCauses, fetchOpportunities, fetchCities])
+  }, [fetchUserCauses, fetchOpportunities, fetchCities, fetchOrganizations, activeTab])
 
   // Initial data loading
   useEffect(() => {
     refreshData()
   }, [refreshData])
 
-  // Use useFocusEffect to refresh data when the screen comes into focus
+  // Add this useEffect to refresh data when the screen comes into focus
   useFocusEffect(
     useCallback(() => {
       console.log("Home screen focused - refreshing data")
@@ -520,6 +704,13 @@ export default function HomeScreen() {
       }
     }, [refreshData]),
   )
+
+  // Effect to load organizations when tab changes to "organization"
+  useEffect(() => {
+    if (activeTab === "organization" && organizations.length === 0) {
+      fetchOrganizations()
+    }
+  }, [activeTab, organizations.length, fetchOrganizations])
 
   if (!fontsLoaded) {
     return null // Return null while fonts are loading
@@ -567,6 +758,11 @@ export default function HomeScreen() {
     } as any)
   }
 
+  const handleOrganizationPress = (organizationId: string) => {
+    // Navigate to organization details
+    router.push(`/organization/${organizationId}` as any)
+  }
+
   // Render the city cards
   const renderCityItem = ({ item }: { item: Location }) => {
     // Make sure the location has a valid image
@@ -577,37 +773,40 @@ export default function HomeScreen() {
     )
   }
 
-  // In the return statement, reorder the elements to have the toggle first, then search bar
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="dark" />
-
-      {/* Add a spacer view at the top */}
-      <View style={styles.statusBarSpacer} />
-
-      {/* Header with toggle tabs - Moved to the top with proper spacing */}
-      <View style={styles.header}>
-        <View style={styles.tabContainer}>
-          {tabs.map((tab) => (
-            <TouchableOpacity
-              key={tab.id}
-              style={[styles.tab, activeTab === tab.id && styles.activeTab]}
-              onPress={() => handleTabChange(tab.id)}
-            >
-              <Text style={[styles.tabText, activeTab === tab.id && styles.activeTabText]}>{tab.label}</Text>
-            </TouchableOpacity>
-          ))}
+  // Render the organization view
+  const renderOrganizationsView = () => {
+    if (loadingOrganizations) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#15B2BF" />
         </View>
+      )
+    }
+
+    if (organizations.length === 0) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>No organizations available</Text>
+        </View>
+      )
+    }
+
+    return (
+      <View style={styles.organizationsContainer}>
+        <Text style={styles.sectionTitle}>Organizations</Text>
+        <Text style={styles.organizationsSubtitle}>Discover organizations creating volunteer opportunities</Text>
+
+        {organizations.map((org) => (
+          <OrganizationCard key={org.id} organization={org} onPress={() => handleOrganizationPress(org.id)} />
+        ))}
       </View>
+    )
+  }
 
-      {/* Search bar - Now below the toggle */}
-      <TouchableOpacity style={styles.searchContainer} onPress={handleSearch}>
-        <Search size={20} color="#999" style={styles.searchIcon} />
-        <Text style={styles.searchPlaceholder}>Find Volunteer Opportunities</Text>
-      </TouchableOpacity>
-
-      {/* The rest of the content remains the same */}
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+  // Render the causes view
+  const renderCausesView = () => {
+    return (
+      <>
         {/* Explore Near You Section */}
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>{isFiltered ? "Explore Causes Near You" : "Explore Near You"}</Text>
@@ -692,7 +891,7 @@ export default function HomeScreen() {
         </View>
 
         {/* Engage in Popular Causes */}
-        <View style={[styles.sectionContainer, styles.lastSection]}>
+        <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>
             {isFiltered ? "Popular Causes You Might Like" : "Engage in Popular Causes"}
           </Text>
@@ -714,6 +913,51 @@ export default function HomeScreen() {
             </View>
           )}
         </View>
+      </>
+    )
+  }
+
+  // In the return statement, reorder the elements to have the toggle first, then search bar
+  return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar style="dark" />
+
+      {/* Add a spacer view at the top */}
+      <View style={styles.statusBarSpacer} />
+
+      {/* Header with toggle tabs - Moved to the top with proper spacing */}
+      <View style={styles.header}>
+        <View style={styles.tabContainer}>
+          {tabs.map((tab) => (
+            <TouchableOpacity
+              key={tab.id}
+              style={[styles.tab, activeTab === tab.id && styles.activeTab]}
+              onPress={() => handleTabChange(tab.id)}
+            >
+              <Text style={[styles.tabText, activeTab === tab.id && styles.activeTabText]}>{tab.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Search bar - Now below the toggle */}
+      <TouchableOpacity style={styles.searchContainer} onPress={handleSearch}>
+        <Search size={20} color="#999" style={styles.searchIcon} />
+        <Text style={styles.searchPlaceholder}>
+          {activeTab === "causes" ? "Find Volunteer Opportunities" : "Search Organizations"}
+        </Text>
+      </TouchableOpacity>
+
+      {/* The rest of the content remains the same */}
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {/* Render different content based on active tab */}
+        {activeTab === "causes" ? renderCausesView() : renderOrganizationsView()}
+
+        {/* NGO Footer - Added at the bottom before the last section spacing */}
+        <NGOFooter />
+
+        {/* Add extra space at the bottom for the navigation bar */}
+        <View style={styles.lastSection} />
       </ScrollView>
 
       {/* Bottom Navigation */}
@@ -793,7 +1037,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   lastSection: {
-    marginBottom: 100, // Extra space for bottom navigation
+    height: 100, // Extra space for bottom navigation
   },
   sectionTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
@@ -903,6 +1147,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
     textAlign: "center",
+  },
+  organizationsContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  organizationsSubtitle: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 20,
+  },
+  loadingContainer: {
+    padding: 40,
+    alignItems: "center",
+    justifyContent: "center",
   },
 })
 

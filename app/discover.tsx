@@ -13,11 +13,10 @@ import {
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { Search, Filter } from "lucide-react-native"
+import { Search, Filter, ArrowLeft } from "lucide-react-native"
 import { collection, query, getDocs, orderBy, limit } from "firebase/firestore"
 import { db } from "./firebase/config"
 import { useFonts } from "expo-font"
-import BottomNavigation from "../components/bottom-navigation"
 import OpportunityCard, { type Opportunity } from "../components/opportunity-card"
 
 // Define the filter options
@@ -61,22 +60,24 @@ export default function DiscoverScreen() {
         }
 
         const opportunitiesSnapshot = await getDocs(opportunitiesQuery)
-        const opportunitiesList = opportunitiesSnapshot.docs.map(
-          (doc) =>
-            ({
-              id: doc.id,
-              name: doc.data().name || "",
-              imageUrl: doc.data().imageUrl || "",
-              date: doc.data().date || "",
-              time: doc.data().time || "",
-              city: doc.data().city || "",
-              volunteers: doc.data().volunteers || "0",
-              organizationName: doc.data().organizationName || "",
-              description: doc.data().description || "",
-              registeredCount: doc.data().registeredCount || 0,
-              maxParticipants: Number.parseInt(doc.data().volunteers || "0"),
-            }) as Opportunity,
-        )
+        const opportunitiesList = opportunitiesSnapshot.docs.map((doc) => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            name: data.name || "",
+            imageUrl: data.imageUrl || "",
+            date: data.date || "",
+            time: data.time || "",
+            city: data.city || "",
+            volunteers: data.volunteers || "0",
+            organizationName: data.organizationName || "",
+            organizationLogo: data.organizationLogo || "",
+            createdBy: data.createdBy || "",
+            description: data.description || "",
+            registeredCount: data.registeredCount || 0,
+            createdAt: data.createdAt || "",
+          }
+        })
 
         setOpportunities(opportunitiesList)
       } catch (error) {
@@ -117,6 +118,9 @@ export default function DiscoverScreen() {
 
       {/* Header */}
       <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <ArrowLeft size={24} color="#000" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Discover</Text>
       </View>
 
@@ -180,9 +184,6 @@ export default function DiscoverScreen() {
           }
         />
       )}
-
-      {/* Bottom Navigation */}
-      <BottomNavigation activeTab="discover" />
     </SafeAreaView>
   )
 }
@@ -196,6 +197,11 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingHorizontal: 20,
     paddingBottom: 10,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  backButton: {
+    marginRight: 15,
   },
   headerTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
@@ -256,7 +262,7 @@ const styles = StyleSheet.create({
   },
   opportunitiesList: {
     padding: 10,
-    paddingBottom: 80, // Extra space for bottom navigation
+    paddingBottom: 20, // Reduced padding since we don't have bottom navigation
   },
   opportunitiesRow: {
     justifyContent: "space-between",
@@ -283,4 +289,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 })
+
+
 

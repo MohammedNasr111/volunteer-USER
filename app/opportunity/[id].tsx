@@ -32,6 +32,10 @@ import {
 } from "firebase/firestore"
 import { auth, db } from "../firebase/config"
 import { useFonts } from "expo-font"
+// Add this import at the top of the file, with your other imports
+import JoinCauseFlow from "../../components/join-cause-flow"
+import { get, ref, set, runTransaction, onValue } from "firebase/database"
+import { realtimeDb } from "../firebase/config"
 
 // Define the participant type
 interface Participant {
@@ -91,9 +95,20 @@ interface Opportunity {
   registered_users?: string[]
 }
 
-export default function OpportunityDetailScreen() {
+// Add this component to display the participant count in the format "X/Y joined"
+const ParticipantCounter = ({ current, max }: { current: number; max: number }) => {
+  return (
+    <View style={styles.participantCounterContainer}>
+      <Text style={styles.participantCounterText}>
+        <Text style={styles.currentCount}>{current}</Text>/{max} joined
+      </Text>
+    </View>
+  )
+}
+
+function OpportunityDetailScreen() {
   const router = useRouter()
-  const { id } = useLocalSearchParams()
+  const { id } = useLocalSearchParams<{ id: string }>()
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null)
   const [loading, setLoading] = useState(true)
   const [isRegistered, setIsRegistered] = useState(false)
@@ -102,6 +117,8 @@ export default function OpportunityDetailScreen() {
   const [similarOpportunities, setSimilarOpportunities] = useState<Opportunity[]>([])
   const [showAllParticipants, setShowAllParticipants] = useState(false)
   const [contactPerson, setContactPerson] = useState<ContactPerson | null>(null)
+  // Add this state variable inside your OpportunityDetailScreen component, near your other state variables
+  const [showJoinFlow, setShowJoinFlow] = useState(false)
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -110,7 +127,7 @@ export default function OpportunityDetailScreen() {
     "AbhayaLibre-ExtraBold": require("../../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
   })
 
-  // Fetch opportunity details
+  // Update the fetchOpportunityDetails function to use the Realtime Database count
   const fetchOpportunityDetails = useCallback(async () => {
     try {
       if (!id) return
@@ -132,7 +149,7 @@ export default function OpportunityDetailScreen() {
                 return {
                   id: userId,
                   name: `${userData.firstName || ""} ${userData.lastName || ""}`.trim(),
-                  avatar: userData.avatar || null,
+                  avatar: userData.photoURL || null, // Note: changed from avatar to photoURL
                   joinedAt: userData.joinedAt || new Date(),
                 }
               }
@@ -197,9 +214,13 @@ export default function OpportunityDetailScreen() {
           })
         }
 
+        // Get the participants count from Realtime Database
+        const participantsCountRef = ref(realtimeDb, `causes/${id}/participantsCount`)
+        const countSnapshot = await get(participantsCountRef)
+        const registeredCount = countSnapshot.exists() ? countSnapshot.val() : data.registered_users?.length || 0
+
         // Calculate if the opportunity is full
         const maxParticipants = Number.parseInt(data.volunteers || "0")
-        const registeredCount = data.registered_users?.length || 0
         const isFull = registeredCount >= maxParticipants
 
         // Parse location data
@@ -330,9 +351,85 @@ export default function OpportunityDetailScreen() {
     }
   }
 
+  // Add this function to the component to ensure the participantsCount is initialized
+  const ensureParticipantsCount = useCallback(async () => {
+    if (!id) return
+
+    try {
+      const participantsCountRef = ref(realtimeDb, `causes/${id}/participantsCount`)
+      const snapshot = await get(participantsCountRef)
+
+      if (!snapshot.exists()) {
+        // If participantsCount doesn't exist, initialize it by counting actual participants
+        const participantsRef = ref(realtimeDb, `causes/${id}/participants`)
+        const participantsSnapshot = await get(participantsRef)
+
+        let actualCount = 0
+        if (participantsSnapshot.exists()) {
+          // Count the actual number of participants
+          const participants = participantsSnapshot.val()
+          actualCount = Object.keys(participants).length
+        } else {
+          // Fallback to Firestore registered_users if no participants in RTDB
+          const opportunityDoc = await getDoc(doc(db, "causes", id as string))
+          if (opportunityDoc.exists()) {
+            const data = opportunityDoc.data()
+            actualCount = data.registered_users?.length || 0
+          }
+        }
+
+        // Initialize the count in Realtime Database with the actual count
+        await set(participantsCountRef, actualCount)
+
+        // Also update the local state
+        setOpportunity((prev) => {
+          if (!prev) return null
+          return {
+            ...prev,
+            registeredCount: actualCount,
+          }
+        })
+      } else {
+        // If participantsCount exists, make sure our local state matches it
+        const count = snapshot.val() || 0
+        setOpportunity((prev) => {
+          if (!prev) return null
+          return {
+            ...prev,
+            registeredCount: count,
+          }
+        })
+      }
+    } catch (error) {
+      console.error("Error ensuring participants count:", error)
+    }
+  }, [id])
+
   useEffect(() => {
     fetchOpportunityDetails()
-  }, [fetchOpportunityDetails])
+    ensureParticipantsCount() // Add this line
+  }, [fetchOpportunityDetails, ensureParticipantsCount])
+
+  // Add this useEffect to listen for realtime updates
+  useEffect(() => {
+    if (!id) return
+
+    const participantsCountRef = ref(realtimeDb, `causes/${id}/participantsCount`)
+    const unsubscribe = onValue(participantsCountRef, (snapshot) => {
+      const count = snapshot.val() || 0
+      setOpportunity((prev) =>
+        prev
+          ? {
+              ...prev,
+              registeredCount: count,
+              isFull: count >= (prev.maxParticipants || 0),
+            }
+          : null,
+      )
+    })
+
+    return () => unsubscribe()
+  }, [id])
 
   // Add this useEffect after your existing useEffects
   useEffect(() => {
@@ -361,6 +458,7 @@ export default function OpportunityDetailScreen() {
     )
   }
 
+  // Update the handleRegister function to use transactions for better reliability
   const handleRegister = async () => {
     try {
       setRegistering(true)
@@ -399,15 +497,45 @@ export default function OpportunityDetailScreen() {
       }
 
       if (isRegistered) {
-        // Unregister
+        // Unregister - first check if user is actually in the participants list
+        const participantRef = ref(realtimeDb, `causes/${id}/participants/${userId}`)
+        const participantSnapshot = await get(participantRef)
+
+        if (participantSnapshot.exists()) {
+          // Only decrement the count if the user was actually in the participants list
+          const participantsCountRef = ref(realtimeDb, `causes/${id}/participantsCount`)
+
+          // Use a transaction to safely decrement the count
+          await runTransaction(participantsCountRef, (currentValue) => {
+            // If the value doesn't exist yet, initialize it to 0
+            const count = currentValue || 0
+
+            // Don't let it go below 0
+            return Math.max(0, count - 1)
+          })
+
+          // Remove from participants list
+          await set(participantRef, null) // Remove the participant
+        }
+
+        // Remove from recent signups
+        const recentSignupRef = ref(realtimeDb, `causes/${id}/recentSignups/${userId}`)
+        await set(recentSignupRef, null) // Remove from recent signups
+
+        // Update Firestore documents
         await updateDoc(doc(db, "users", userId), {
           registered_opportunities: arrayRemove(id),
         })
 
         // Update opportunity registered users list
-        await updateDoc(doc(db, "causes", id as string), {
-          registered_users: arrayRemove(userId),
-        })
+        try {
+          await updateDoc(doc(db, "causes", id as string), {
+            registered_users: arrayRemove(userId),
+          })
+        } catch (error) {
+          console.error("Error updating cause document:", error)
+          // Continue anyway since this is non-critical
+        }
 
         setIsRegistered(false)
 
@@ -419,7 +547,7 @@ export default function OpportunityDetailScreen() {
 
           return {
             ...prev,
-            registeredCount: updatedRegisteredUsers.length,
+            registeredCount: Math.max(0, (prev.registeredCount || 0) - 1),
             isFull: false,
             registered_users: updatedRegisteredUsers,
             participants: prev.participants?.filter((p) => p.id !== userId),
@@ -428,55 +556,8 @@ export default function OpportunityDetailScreen() {
 
         Alert.alert("Success", "You have unregistered from this opportunity")
       } else {
-        // Get user data for participant info
-        const userDoc = await getDoc(doc(db, "users", userId))
-        let userName = "Volunteer"
-        let userAvatar = null
-
-        if (userDoc.exists()) {
-          const userData = userDoc.data()
-          userName = `${userData.firstName || ""} ${userData.lastName || ""}`.trim()
-          userAvatar = userData.avatar
-        }
-
-        // Register
-        await updateDoc(doc(db, "users", userId), {
-          registered_opportunities: arrayUnion(id),
-        })
-
-        // Update opportunity registered users list
-        await updateDoc(doc(db, "causes", id as string), {
-          registered_users: arrayUnion(userId),
-        })
-
-        setIsRegistered(true)
-
-        // Update local state
-        setOpportunity((prev) => {
-          if (!prev) return null
-
-          const updatedRegisteredUsers = [...(prev.registered_users || []), userId]
-          const newRegisteredCount = updatedRegisteredUsers.length
-          const newIsFull = newRegisteredCount >= (prev.maxParticipants || 0)
-
-          // Create new participant
-          const newParticipant: Participant = {
-            id: userId,
-            name: userName,
-            avatar: userAvatar,
-            joinedAt: new Date(),
-          }
-
-          return {
-            ...prev,
-            registeredCount: newRegisteredCount,
-            isFull: newIsFull,
-            registered_users: updatedRegisteredUsers,
-            participants: [...(prev.participants || []), newParticipant],
-          }
-        })
-
-        Alert.alert("Success", "You have registered for this opportunity")
+        // Register - this will be handled by the JoinCauseFlow component
+        setShowJoinFlow(true)
       }
     } catch (error) {
       console.error("Error registering for opportunity:", error)
@@ -671,7 +752,7 @@ export default function OpportunityDetailScreen() {
             styles.joinButton,
             isRegistered ? styles.cancelButton : isFull && !isRegistered ? styles.disabledButton : {},
           ]}
-          onPress={handleRegister}
+          onPress={() => (isRegistered ? handleRegister() : setShowJoinFlow(true))}
           disabled={registering || (isFull && !isRegistered)}
         >
           {registering ? (
@@ -808,12 +889,12 @@ export default function OpportunityDetailScreen() {
                 )}
               </View>
 
-              <Text style={styles.spotsLeftText}>{isFull ? "This event is full" : `${spotsLeft} spots left`}</Text>
+              <ParticipantCounter current={registeredCount} max={maxParticipants} />
             </View>
           ) : (
             <View style={styles.noAttendeesContainer}>
               <Text style={styles.noAttendeesText}>Be the first to join this opportunity!</Text>
-              <Text style={styles.spotsLeftText}>{`${maxParticipants} spots available`}</Text>
+              <ParticipantCounter current={registeredCount} max={maxParticipants} />
             </View>
           )}
         </View>
@@ -892,7 +973,7 @@ export default function OpportunityDetailScreen() {
             styles.bottomJoinButton,
             isRegistered ? styles.cancelButton : isFull && !isRegistered ? styles.disabledButton : {},
           ]}
-          onPress={handleRegister}
+          onPress={() => (isRegistered ? handleRegister() : setShowJoinFlow(true))}
           disabled={registering || (isFull && !isRegistered)}
         >
           {registering ? (
@@ -904,6 +985,18 @@ export default function OpportunityDetailScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+      <JoinCauseFlow
+        isVisible={showJoinFlow}
+        onClose={() => {
+          setShowJoinFlow(false)
+          fetchOpportunityDetails() // Refresh data after closing
+        }}
+        causeId={id as string}
+        causeName={opportunity?.name || ""}
+        causeDate={formatDate(opportunity?.date || "")}
+        causeTime={opportunity?.time || ""}
+        maxParticipants={opportunity?.maxParticipants || 0}
+      />
     </SafeAreaView>
   )
 }
@@ -994,7 +1087,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginHorizontal: 20,
     marginBottom: 20,
-    width: 142, // Added width specification
+    width: 142, // Default width for Join button
     alignSelf: "center", // Center the button
     // Add shadow properties
     shadowColor: "#000",
@@ -1005,6 +1098,7 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     backgroundColor: "#FF4757",
+    width: 180, // Wider width for Cancel Registration button
   },
   disabledButton: {
     backgroundColor: "#ccc",
@@ -1284,5 +1378,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  participantCounterContainer: {
+    backgroundColor: "#f5f5f5",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    marginTop: 5,
+  },
+  participantCounterText: {
+    fontSize: 14,
+    color: "#666",
+  },
+  currentCount: {
+    fontWeight: "bold",
+    color: "#15B2BF",
+  },
 })
+
+export default OpportunityDetailScreen
 

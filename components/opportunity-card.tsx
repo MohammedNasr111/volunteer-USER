@@ -1,116 +1,210 @@
+"use client"
+
+import type React from "react"
 import { View, Text, StyleSheet, TouchableOpacity, Image } from "react-native"
+import { useEffect, useState } from "react"
+import { ref, onValue } from "firebase/database"
+import { getDoc, doc } from "firebase/firestore"
+import { db, realtimeDb } from "../app/firebase/config"
 import { Calendar, Clock } from "lucide-react-native"
 
-// Define the opportunity type based on your Firestore structure
 export interface Opportunity {
   id: string
   name: string
   imageUrl?: string
-  date: string
-  time: string
-  location?: {
-    address?: string
-  }
+  date?: string
+  time?: string
   city?: string
-  description?: string
   volunteers?: string
-  maxParticipants?: number
-  registeredCount?: number
   organizationName?: string
   organizationLogo?: string
-  participants?: Array<{
-    id?: string
-    name?: string
-    avatar?: string
-  }>
+  createdBy?: string
+  description?: string
+  registeredCount?: number
+  createdAt?: string
 }
 
-type OpportunityCardProps = {
+interface OpportunityCardProps {
   opportunity: Opportunity
-  onPress: () => void
+  onPress: (opportunityId: string) => void
 }
 
-export default function OpportunityCard({ opportunity, onPress }: OpportunityCardProps) {
-  // Format the date
-  const formatDate = (dateString: string) => {
+const OpportunityCard: React.FC<OpportunityCardProps> = ({ opportunity, onPress }) => {
+  const [registeredCount, setRegisteredCount] = useState(opportunity.registeredCount || 0)
+  const [orgName, setOrgName] = useState(opportunity.organizationName || "")
+  const [orgLogo, setOrgLogo] = useState(opportunity.organizationLogo || "")
+
+  // Format date and time for display (e.g., "Tue, 8 Apr • 08:00")
+  const formatDateAndTime = (dateString?: string, timeString?: string) => {
+    if (!dateString) return ""
     try {
       const date = new Date(dateString)
-      const day = date.getDate()
-      const month = date.toLocaleString("default", { month: "short" })
-      return `${day} ${month}`
-    } catch (error) {
+
+      // Format day and date (e.g., "Tue, 8 Apr")
+      const day = date.toLocaleDateString("en-US", { weekday: "short" })
+      const dayNum = date.getDate()
+      const month = date.toLocaleDateString("en-US", { month: "short" })
+
+      // Extract start time from timeString if available
+      let startTime = ""
+      if (timeString) {
+        const timeParts = timeString.split(" - ")
+        if (timeParts.length > 0) {
+          startTime = timeParts[0].trim()
+        }
+      }
+
+      // Return formatted string with time if available
+      if (startTime) {
+        return `${day}, ${dayNum} ${month} • ${startTime}`
+      } else {
+        return `${day}, ${dayNum} ${month}`
+      }
+    } catch (e) {
+      console.error("Error formatting date:", e)
       return dateString
     }
   }
 
-  // Calculate spots left
-  const maxParticipants = opportunity.maxParticipants || Number.parseInt(opportunity.volunteers || "0")
-  const registeredCount = opportunity.registeredCount || 0
-  const spotsLeft = maxParticipants - registeredCount
+  // Improved duration calculation from the working version
+  const calculateDuration = (timeString?: string) => {
+    if (!timeString || !timeString.includes("-")) return "4 hrs"
+
+    try {
+      const [startTimeStr, endTimeStr] = timeString.split("-").map((t) => t.trim())
+
+      // Parse start time
+      let startHour = 0
+      let startMinute = 0
+      const startMatch = startTimeStr.match(/(\d+):(\d+)(?:\s*(AM|PM))?/i)
+
+      if (startMatch) {
+        startHour = Number.parseInt(startMatch[1], 10)
+        startMinute = Number.parseInt(startMatch[2], 10)
+
+        // Handle AM/PM for start time
+        const startPeriod = startMatch[3]?.toUpperCase()
+        if (startPeriod === "PM" && startHour < 12) startHour += 12
+        if (startPeriod === "AM" && startHour === 12) startHour = 0
+      }
+
+      // Parse end time
+      let endHour = 0
+      let endMinute = 0
+      const endMatch = endTimeStr.match(/(\d+):(\d+)(?:\s*(AM|PM))?/i)
+
+      if (endMatch) {
+        endHour = Number.parseInt(endMatch[1], 10)
+        endMinute = Number.parseInt(endMatch[2], 10)
+
+        // Handle AM/PM for end time
+        const endPeriod = endMatch[3]?.toUpperCase()
+        if (endPeriod === "PM" && endHour < 12) endHour += 12
+        if (endPeriod === "AM" && endHour === 12) endHour = 0
+      }
+
+      // Calculate duration in hours
+      const startMinutes = startHour * 60 + startMinute
+      const endMinutes = endHour * 60 + endMinute
+
+      // Handle case where end time is on the next day
+      const durationMinutes =
+        endMinutes >= startMinutes ? endMinutes - startMinutes : 24 * 60 - startMinutes + endMinutes
+
+      const durationHours = durationMinutes / 60
+
+      // Format the duration
+      return durationHours % 1 === 0 ? `${durationHours} hrs` : `${durationHours.toFixed(1)} hrs`
+    } catch (error) {
+      console.error("Error calculating duration:", error)
+      return "4 hrs" // Fallback
+    }
+  }
+
+  // Update the path for the registered count to match what's used in join-cause-flow.tsx
+  useEffect(() => {
+    if (opportunity.id) {
+      // Set up a listener for real-time updates to the registered count
+      const countRef = ref(realtimeDb, `causes/${opportunity.id}/participantsCount`)
+      const unsubscribe = onValue(countRef, (snapshot) => {
+        const count = snapshot.val()
+        if (count !== null && count !== undefined) {
+          setRegisteredCount(count)
+        }
+      })
+
+      // Fetch organization data if needed
+      if (opportunity.createdBy && (!orgName || !orgLogo)) {
+        const fetchOrgData = async () => {
+          try {
+            const orgDoc = await getDoc(doc(db, "admins", opportunity.createdBy || ""))
+            if (orgDoc.exists()) {
+              const orgData = orgDoc.data()
+              if (orgData.organizationName) {
+                setOrgName(orgData.organizationName)
+              }
+              if (orgData.photoURL) {
+                setOrgLogo(orgData.photoURL)
+              }
+            }
+          } catch (error) {
+            console.error("Error fetching organization data:", error)
+          }
+        }
+        fetchOrgData()
+      }
+
+      // Clean up the listener when the component unmounts
+      return () => unsubscribe()
+    }
+  }, [opportunity.id, opportunity.createdBy, orgName, orgLogo])
+
+  // Get the display name and logo for the organization
+  const displayOrgName = orgName || opportunity.organizationName || "Unknown Organization"
+  const displayOrgLogo = orgLogo || opportunity.organizationLogo
+
+  // Calculate the volunteers count
+  const maxVolunteers = Number.parseInt(opportunity.volunteers || "0", 10)
+  const volunteersText = `${registeredCount || 0}/${maxVolunteers} joined`
+
+  // Get the duration using the improved function
+  const duration = calculateDuration(opportunity.time)
 
   return (
-    <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.9}>
-      {/* Opportunity Image */}
-      <View style={[styles.image, { backgroundColor: "#f0f0f0", justifyContent: "center", alignItems: "center" }]}>
-        {opportunity.imageUrl ? (
-          <Image
-            source={{ uri: opportunity.imageUrl }}
-            style={styles.image}
-            defaultSource={require("../assets/images/placeholder.png")}
-          />
-        ) : (
-          <Text style={{ color: "#999", fontSize: 12 }}>No Image</Text>
-        )}
+    <TouchableOpacity style={styles.container} onPress={() => onPress(opportunity.id)} activeOpacity={0.7}>
+      <Image
+        source={opportunity.imageUrl ? { uri: opportunity.imageUrl } : require("../assets/images/placeholder.png")}
+        style={styles.image}
+      />
+
+      {/* Date and Time Badge (Top Left) */}
+      <View style={styles.dateTimeContainer}>
+        <Calendar size={12} color="#000" style={styles.calendarIcon} />
+        <Text style={styles.dateTimeText}>{formatDateAndTime(opportunity.date, opportunity.time)}</Text>
       </View>
 
-      {/* Date and Duration Badge */}
-      <View style={styles.dateBadge}>
-        <Calendar size={12} color="#000" />
-        <Text style={styles.dateText}>{`Sat, ${formatDate(opportunity.date || "")} • ${opportunity.time || ""}`}</Text>
+      {/* Duration Badge (Bottom Right) */}
+      <View style={styles.durationContainer}>
+        <Clock size={12} color="#000" style={styles.clockIcon} />
+        <Text style={styles.durationText}>{duration}</Text>
       </View>
 
-      {/* Duration Badge */}
-      <View style={styles.durationBadge}>
-        <Clock size={12} color="#000" />
-        <Text style={styles.durationText}>{`4 hrs`}</Text>
-      </View>
-
-      {/* Content */}
-      <View style={styles.content}>
-        <Text style={styles.title} numberOfLines={1}>
+      <View style={styles.contentContainer}>
+        <Text style={styles.title} numberOfLines={2}>
           {opportunity.name}
         </Text>
-
         <View style={styles.organizationRow}>
-          <Image
-            source={
-              opportunity.organizationLogo
-                ? { uri: opportunity.organizationLogo }
-                : require("../assets/images/placeholder.png")
-            }
-            style={styles.orgLogo}
-          />
+          {displayOrgLogo ? (
+            <Image source={{ uri: displayOrgLogo }} style={styles.orgLogo} />
+          ) : (
+            <View style={styles.orgLogoPlaceholder} />
+          )}
           <Text style={styles.organizationName} numberOfLines={1}>
-            {opportunity.organizationName || "Organization"}
+            {displayOrgName}
           </Text>
         </View>
-
         <View style={styles.footer}>
-          <Text style={styles.spotsText}>{`${spotsLeft}/${maxParticipants} spots left`}</Text>
-
-          {/* Participants Avatars */}
-          <View style={styles.avatarsContainer}>
-            {opportunity.participants &&
-              opportunity.participants
-                .slice(0, 3)
-                .map((participant, index) => (
-                  <Image
-                    key={index}
-                    source={{ uri: participant.avatar || "https://via.placeholder.com/24" }}
-                    style={[styles.avatar, { marginLeft: index > 0 ? -10 : 0 }]}
-                  />
-                ))}
-          </View>
+          <Text style={styles.volunteers}>{volunteersText}</Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -120,60 +214,84 @@ export default function OpportunityCard({ opportunity, onPress }: OpportunityCar
 const styles = StyleSheet.create({
   container: {
     width: "48%",
-    borderRadius: 12,
     backgroundColor: "#fff",
-    marginBottom: 15,
+    borderRadius: 12,
     overflow: "hidden",
+    marginBottom: 16,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: "#f0f0f0",
   },
   image: {
     width: "100%",
     height: 120,
     resizeMode: "cover",
   },
-  dateBadge: {
+  dateTimeContainer: {
     position: "absolute",
     top: 8,
     left: 8,
-    backgroundColor: "#fff",
-    borderRadius: 15,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     flexDirection: "row",
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
+    elevation: 2,
   },
-  dateText: {
+  calendarIcon: {
+    marginRight: 2,
+    width: 12,
+    height: 12,
+  },
+  dateTimeText: {
+    color: "#000",
     fontSize: 10,
-    marginLeft: 4,
     fontWeight: "500",
   },
-  durationBadge: {
+  durationContainer: {
     position: "absolute",
-    top: 8,
+    bottom: 120, // Position it at the bottom of the image (image height is 120)
     right: 8,
-    backgroundColor: "#fff",
-    borderRadius: 15,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     flexDirection: "row",
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
+    elevation: 5, // Increase elevation to ensure it's visible
+    zIndex: 10, // Add zIndex to ensure it's on top
+  },
+  clockIcon: {
+    marginRight: 2,
+    width: 12,
+    height: 12,
   },
   durationText: {
+    color: "#000",
     fontSize: 10,
-    marginLeft: 4,
     fontWeight: "500",
   },
-  content: {
-    padding: 10,
+  contentContainer: {
+    padding: 12,
   },
   title: {
-    fontSize: 14,
-    fontWeight: "bold",
-    marginBottom: 5,
+    fontFamily: "AbhayaLibre-ExtraBold",
+    fontSize: 16,
+    marginBottom: 8,
+    height: 40,
   },
   organizationRow: {
     flexDirection: "row",
@@ -181,10 +299,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   orgLogo: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    marginRight: 5,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    marginRight: 6,
+  },
+  orgLogoPlaceholder: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#f0f0f0",
+    marginRight: 6,
   },
   organizationName: {
     fontSize: 12,
@@ -196,19 +321,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  spotsText: {
-    fontSize: 10,
-    color: "#666",
-  },
-  avatarsContainer: {
-    flexDirection: "row",
-  },
-  avatar: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#fff",
+  volunteers: {
+    fontSize: 12,
+    color: "#15B2BF",
+    fontWeight: "500",
   },
 })
 
+export default OpportunityCard
