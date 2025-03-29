@@ -41,7 +41,7 @@ import { realtimeDb } from "../firebase/config"
 interface Participant {
   id: string
   name: string
-  avatar?: string
+  avatar?: string | null
   joinedAt: Timestamp | Date
 }
 
@@ -119,6 +119,8 @@ function OpportunityDetailScreen() {
   const [contactPerson, setContactPerson] = useState<ContactPerson | null>(null)
   // Add this state variable inside your OpportunityDetailScreen component, near your other state variables
   const [showJoinFlow, setShowJoinFlow] = useState(false)
+  // Add this state to track actual participants from Realtime Database
+  const [actualParticipants, setActualParticipants] = useState<Record<string, any>>({})
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -126,6 +128,25 @@ function OpportunityDetailScreen() {
     "AbhayaLibre-Regular": require("../../assets/fonts/AbhayaLibre-Regular.ttf"),
     "AbhayaLibre-ExtraBold": require("../../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
   })
+
+  // Add this function to fetch actual participants from Realtime Database
+  const fetchActualParticipants = useCallback(async () => {
+    if (!id) return
+
+    try {
+      const participantsRef = ref(realtimeDb, `causes/${id}/participants`)
+      const snapshot = await get(participantsRef)
+
+      if (snapshot.exists()) {
+        setActualParticipants(snapshot.val())
+      } else {
+        setActualParticipants({})
+      }
+    } catch (error) {
+      console.error("Error fetching actual participants:", error)
+      setActualParticipants({})
+    }
+  }, [id])
 
   // Update the fetchOpportunityDetails function to use the Realtime Database count
   const fetchOpportunityDetails = useCallback(async () => {
@@ -140,28 +161,57 @@ function OpportunityDetailScreen() {
         // Get participants with their details
         let participants: Participant[] = []
         if (data.registered_users && Array.isArray(data.registered_users)) {
-          // Fetch user details for each registered user
-          const userPromises = data.registered_users.map(async (userId: string) => {
-            try {
-              const userDoc = await getDoc(doc(db, "users", userId))
-              if (userDoc.exists()) {
-                const userData = userDoc.data()
+          try {
+            // Fetch user details for each registered user
+            const userPromises = data.registered_users.map(async (userId: string) => {
+              try {
+                // Only try to fetch user data if it's the current user
+                // This avoids permission errors for other users' data
+                if (userId === auth.currentUser?.uid) {
+                  const userDoc = await getDoc(doc(db, "users", userId))
+                  if (userDoc.exists()) {
+                    const userData = userDoc.data()
+                    return {
+                      id: userId,
+                      name: `${userData.firstName || ""} ${userData.lastName || ""}`.trim(),
+                      avatar: userData.photoURL || null,
+                      joinedAt: userData.joinedAt || new Date(),
+                    }
+                  }
+                } else {
+                  // For other users, just return basic info without fetching
+                  return {
+                    id: userId,
+                    name: "Volunteer", // Generic name
+                    avatar: null,
+                    joinedAt: new Date(),
+                  }
+                }
+                return null
+              } catch (e) {
+                // Silently handle individual user fetch errors
                 return {
                   id: userId,
-                  name: `${userData.firstName || ""} ${userData.lastName || ""}`.trim(),
-                  avatar: userData.photoURL || null, // Note: changed from avatar to photoURL
-                  joinedAt: userData.joinedAt || new Date(),
+                  name: "Volunteer",
+                  avatar: null,
+                  joinedAt: new Date(),
                 }
               }
-              return null
-            } catch (e) {
-              console.error("Error fetching user data:", e)
-              return null
-            }
-          })
+            })
 
-          const userResults = await Promise.all(userPromises)
-          participants = userResults.filter(Boolean) as Participant[]
+            const userResults = await Promise.all(userPromises)
+            participants = userResults.filter(Boolean) as Participant[]
+          } catch (error) {
+            // If there's an error with the entire process, log it but continue
+            console.log("Note: Could not fetch detailed participant info due to permissions")
+            // Create basic participant objects from the IDs
+            participants = data.registered_users.map((userId) => ({
+              id: userId,
+              name: "Volunteer",
+              avatar: undefined, // Use undefined instead of null to match the type
+              joinedAt: new Date(),
+            }))
+          }
         }
 
         // Get contact person details (creator of the cause)
@@ -217,7 +267,7 @@ function OpportunityDetailScreen() {
         // Get the participants count from Realtime Database
         const participantsCountRef = ref(realtimeDb, `causes/${id}/participantsCount`)
         const countSnapshot = await get(participantsCountRef)
-        const registeredCount = countSnapshot.exists() ? countSnapshot.val() : data.registered_users?.length || 0
+        const registeredCount = countSnapshot.exists() ? countSnapshot.val() : 0
 
         // Calculate if the opportunity is full
         const maxParticipants = Number.parseInt(data.volunteers || "0")
@@ -271,6 +321,13 @@ function OpportunityDetailScreen() {
           const userData = userDoc.data()
           setIsRegistered(userData.registered_opportunities?.includes(id) || false)
           setIsSaved(userData.saved_opportunities?.includes(id) || false)
+        }
+
+        // Also check if user exists in the participants list in Realtime Database
+        const participantRef = ref(realtimeDb, `causes/${id}/participants/${userId}`)
+        const participantSnapshot = await get(participantRef)
+        if (participantSnapshot.exists()) {
+          setIsRegistered(true)
         }
       }
     } catch (error) {
@@ -356,47 +413,58 @@ function OpportunityDetailScreen() {
     if (!id) return
 
     try {
-      const participantsCountRef = ref(realtimeDb, `causes/${id}/participantsCount`)
-      const snapshot = await get(participantsCountRef)
+      // First check if there are any participants
+      const participantsRef = ref(realtimeDb, `causes/${id}/participants`)
+      const participantsSnapshot = await get(participantsRef)
 
-      if (!snapshot.exists()) {
-        // If participantsCount doesn't exist, initialize it by counting actual participants
-        const participantsRef = ref(realtimeDb, `causes/${id}/participants`)
-        const participantsSnapshot = await get(participantsRef)
+      // Only proceed if participants exist
+      if (participantsSnapshot.exists()) {
+        const participantsCountRef = ref(realtimeDb, `causes/${id}/participantsCount`)
+        const countSnapshot = await get(participantsCountRef)
 
-        let actualCount = 0
-        if (participantsSnapshot.exists()) {
+        if (!countSnapshot.exists()) {
           // Count the actual number of participants
           const participants = participantsSnapshot.val()
-          actualCount = Object.keys(participants).length
+          const actualCount = Object.keys(participants).length
+
+          // Initialize the count in Realtime Database with the actual count
+          await set(participantsCountRef, actualCount)
+
+          // Also update the local state
+          setOpportunity((prev) => {
+            if (!prev) return null
+            return {
+              ...prev,
+              registeredCount: actualCount,
+            }
+          })
         } else {
-          // Fallback to Firestore registered_users if no participants in RTDB
-          const opportunityDoc = await getDoc(doc(db, "causes", id as string))
-          if (opportunityDoc.exists()) {
-            const data = opportunityDoc.data()
-            actualCount = data.registered_users?.length || 0
-          }
+          // If participantsCount exists, make sure our local state matches it
+          const count = countSnapshot.val() || 0
+          setOpportunity((prev) => {
+            if (!prev) return null
+            return {
+              ...prev,
+              registeredCount: count,
+            }
+          })
+        }
+      } else {
+        // No participants exist, ensure count is 0
+        const participantsCountRef = ref(realtimeDb, `causes/${id}/participantsCount`)
+        const countSnapshot = await get(participantsCountRef)
+
+        if (!countSnapshot.exists()) {
+          // Initialize with 0
+          await set(participantsCountRef, 0)
         }
 
-        // Initialize the count in Realtime Database with the actual count
-        await set(participantsCountRef, actualCount)
-
-        // Also update the local state
+        // Update local state
         setOpportunity((prev) => {
           if (!prev) return null
           return {
             ...prev,
-            registeredCount: actualCount,
-          }
-        })
-      } else {
-        // If participantsCount exists, make sure our local state matches it
-        const count = snapshot.val() || 0
-        setOpportunity((prev) => {
-          if (!prev) return null
-          return {
-            ...prev,
-            registeredCount: count,
+            registeredCount: countSnapshot.exists() ? countSnapshot.val() : 0,
           }
         })
       }
@@ -407,10 +475,27 @@ function OpportunityDetailScreen() {
 
   useEffect(() => {
     fetchOpportunityDetails()
-    ensureParticipantsCount() // Add this line
-  }, [fetchOpportunityDetails, ensureParticipantsCount])
+    ensureParticipantsCount()
+    fetchActualParticipants() // Add this line to fetch actual participants
+  }, [fetchOpportunityDetails, ensureParticipantsCount, fetchActualParticipants])
 
-  // Add this useEffect to listen for realtime updates
+  // Add this useEffect to listen for realtime updates to participants
+  useEffect(() => {
+    if (!id) return
+
+    const participantsRef = ref(realtimeDb, `causes/${id}/participants`)
+    const unsubscribe = onValue(participantsRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setActualParticipants(snapshot.val())
+      } else {
+        setActualParticipants({})
+      }
+    })
+
+    return () => unsubscribe()
+  }, [id])
+
+  // Add this useEffect to listen for realtime updates to participant count
   useEffect(() => {
     if (!id) return
 
@@ -701,6 +786,17 @@ function OpportunityDetailScreen() {
   const isFull = spotsLeft <= 0
   const scheduleItems = parseSchedule(opportunity.schedule || "")
 
+  // Convert actualParticipants object to array for display
+  const actualParticipantsArray = Object.keys(actualParticipants).map((userId) => {
+    const participant = actualParticipants[userId]
+    return {
+      id: userId,
+      name: participant.name || "Anonymous",
+      avatar: participant.avatar || null,
+      joinedAt: participant.joinedAt || new Date().toISOString(),
+    }
+  })
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
@@ -852,20 +948,20 @@ function OpportunityDetailScreen() {
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>Attendees</Text>
-            {opportunity.participants && opportunity.participants.length > 0 && (
+            {actualParticipantsArray.length > 0 && (
               <TouchableOpacity onPress={() => setShowAllParticipants(!showAllParticipants)}>
                 <Text style={styles.seeAllText}>
-                  {showAllParticipants ? "Hide" : `See all ${opportunity.participants.length}`}
+                  {showAllParticipants ? "Hide" : `See all ${actualParticipantsArray.length}`}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
 
-          {opportunity.participants && opportunity.participants.length > 0 ? (
+          {actualParticipantsArray.length > 0 ? (
             <View style={styles.attendeesContainer}>
               <View style={styles.avatarsRow}>
-                {opportunity.participants
-                  .slice(0, showAllParticipants ? opportunity.participants.length : 3)
+                {actualParticipantsArray
+                  .slice(0, showAllParticipants ? actualParticipantsArray.length : 3)
                   .map((participant, index) => (
                     <View key={participant.id || index} style={styles.avatarContainer}>
                       <Image
@@ -882,9 +978,9 @@ function OpportunityDetailScreen() {
                     </View>
                   ))}
 
-                {!showAllParticipants && opportunity.participants.length > 3 && (
+                {!showAllParticipants && actualParticipantsArray.length > 3 && (
                   <TouchableOpacity style={styles.moreAvatarsButton} onPress={() => setShowAllParticipants(true)}>
-                    <Text style={styles.moreAvatarsText}>+{opportunity.participants.length - 3}</Text>
+                    <Text style={styles.moreAvatarsText}>+{actualParticipantsArray.length - 3}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -990,6 +1086,7 @@ function OpportunityDetailScreen() {
         onClose={() => {
           setShowJoinFlow(false)
           fetchOpportunityDetails() // Refresh data after closing
+          fetchActualParticipants() // Also refresh actual participants
         }}
         causeId={id as string}
         causeName={opportunity?.name || ""}

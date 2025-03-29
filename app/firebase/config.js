@@ -1,7 +1,7 @@
 // app/firebase/config.js
 import { initializeApp } from "firebase/app"
 import { initializeAuth, getReactNativePersistence } from "firebase/auth"
-import { getFirestore } from "firebase/firestore"
+import { getFirestore, collection, getDocs } from "firebase/firestore"
 import { getStorage } from "firebase/storage"
 import { getDatabase, ref, get, set } from "firebase/database" // Add this import
 import AsyncStorage from "@react-native-async-storage/async-storage"
@@ -56,6 +56,48 @@ export const fixParticipantCounts = async (causeId) => {
     return actualCount
   } catch (error) {
     console.error("Error fixing participant count:", error)
+    throw error
+  }
+}
+
+// Utility function to fix participant counts for all causes
+export const fixAllParticipantCounts = async () => {
+  try {
+    // Get all causes
+    const causesSnapshot = await getDocs(collection(db, "causes"))
+
+    const results = []
+
+    for (const causeDoc of causesSnapshot.docs) {
+      const causeId = causeDoc.id
+
+      // Get the participants from Realtime Database
+      const participantsRef = ref(realtimeDb, `causes/${causeId}/participants`)
+      const participantsSnapshot = await get(participantsRef)
+
+      // Count the actual participants
+      let actualCount = 0
+      if (participantsSnapshot.exists()) {
+        const participants = participantsSnapshot.val()
+        actualCount = Object.keys(participants).length
+      }
+
+      // Update the count in the database
+      const countRef = ref(realtimeDb, `causes/${causeId}/participantsCount`)
+      await set(countRef, actualCount)
+
+      results.push({
+        causeId,
+        name: causeDoc.data().name || "Unknown Cause",
+        actualCount,
+      })
+
+      console.log(`Fixed participant count for cause ${causeId}: set to ${actualCount}`)
+    }
+
+    return results
+  } catch (error) {
+    console.error("Error fixing all participant counts:", error)
     throw error
   }
 }

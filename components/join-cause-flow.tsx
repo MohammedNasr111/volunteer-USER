@@ -157,25 +157,37 @@ export default function JoinCauseFlow({
       } else {
         // User is not registered yet, add them and increment count
         // Add participant data
-        await set(participantRef, {
-          joinedAt: Date.now(),
-          about: about,
-          name: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || "Anonymous",
-          photoURL: userData?.photoURL || null,
-        })
+        const participantRef = ref(realtimeDb, `causes/${causeId}/participants/${userId}`)
+        const participantData = {
+          joinedAt: new Date().toISOString(),
+          name: `${userData.firstName || ""} ${userData.lastName || ""}`.trim(),
+          avatar: userData.photoURL || null,
+        }
 
-        // Update the count using a transaction for reliability
-        // Only increment if the user wasn't already in the participants list
-        await runTransaction(participantsCountRef, (currentValue) => {
-          return (currentValue || 0) + 1
-        })
+        // First check if the user is already in the participants list
+        const existingParticipantSnapshot = await get(participantRef)
+        const isNewParticipant = !existingParticipantSnapshot.exists()
+
+        // Set the participant data
+        await set(participantRef, participantData)
+
+        // Only increment the count if this is a new participant
+        if (isNewParticipant) {
+          const participantsCountRef = ref(realtimeDb, `causes/${causeId}/participantsCount`)
+
+          // Use a transaction to safely increment the count
+          await runTransaction(participantsCountRef, (currentCount) => {
+            // If the value doesn't exist yet, initialize it to 0
+            return (currentCount || 0) + 1
+          })
+        }
 
         // Add to recent signups
         const recentSignupRef = ref(realtimeDb, `causes/${causeId}/recentSignups/${userId}`)
         await set(recentSignupRef, {
-          name: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || "Anonymous",
-          timestamp: Date.now(),
-          photoURL: userData?.photoURL || null,
+          timestamp: new Date().toISOString(),
+          name: `${userData.firstName || ""} ${userData.lastName || ""}`.trim(),
+          avatar: userData.photoURL || null,
         })
       }
 

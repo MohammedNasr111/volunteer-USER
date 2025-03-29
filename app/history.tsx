@@ -80,6 +80,10 @@ export default function HistoryScreen() {
 
             // Sort by date (most recent first)
             pastOpportunities.sort((a, b) => {
+              // Handle cases where date might be undefined
+              if (!a.date) return 1 // Move items without dates to the end
+              if (!b.date) return -1 // Move items without dates to the end
+
               const dateA = new Date(a.date).getTime()
               const dateB = new Date(b.date).getTime()
               return dateB - dateA
