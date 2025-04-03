@@ -10,6 +10,8 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  FlatList,
+  Dimensions,
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
@@ -24,6 +26,9 @@ import OpportunityCard, { type Opportunity } from "../components/opportunity-car
 import * as ImagePicker from "expo-image-picker"
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
 import { useFocusEffect } from "@react-navigation/native"
+
+// Get screen width for calculating card width
+const screenWidth = Dimensions.get("window").width
 
 // Add a global update function at the top of the file, after imports
 declare global {
@@ -348,6 +353,15 @@ export default function ProfileScreen() {
     setShowRankInfo(!showRankInfo)
   }
 
+  // Function to render each opportunity item in the grid
+  const renderOpportunityItem = ({ item, index }: { item: Opportunity; index: number }) => {
+    return (
+      <View style={styles.gridItem}>
+        <OpportunityCard opportunity={item} onPress={() => handleOpportunityPress(item.id)} />
+      </View>
+    )
+  }
+
   if (!fontsLoaded || loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -446,6 +460,9 @@ export default function ProfileScreen() {
         ))}
       </View>
 
+      {/* Horizontal line to separate tabs from content */}
+      <View style={styles.horizontalLine} />
+
       {/* Opportunities List */}
       {loadingOpportunities ? (
         <View style={styles.loadingContainer}>
@@ -456,15 +473,17 @@ export default function ProfileScreen() {
           <Text style={styles.emptyText}>No {activeTab} causes found</Text>
         </View>
       ) : (
-        <ScrollView style={styles.opportunitiesContainer}>
-          {opportunities.map((opportunity) => (
-            <OpportunityCard
-              key={opportunity.id}
-              opportunity={opportunity}
-              onPress={() => handleOpportunityPress(opportunity.id)}
-            />
-          ))}
-        </ScrollView>
+        <View style={styles.opportunitiesContainer}>
+          <FlatList
+            key={`opportunities-${activeTab}`} // Add a key that changes when the tab changes
+            data={opportunities}
+            renderItem={renderOpportunityItem}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.opportunitiesContent}
+            numColumns={2} // Set to 2 columns for grid layout
+            columnWrapperStyle={styles.columnWrapper} // Style for the row wrapper
+          />
+        </View>
       )}
 
       {/* Find More Causes Button */}
@@ -516,7 +535,7 @@ export default function ProfileScreen() {
   )
 }
 
-// Update the statsContainer style to use the new background color
+// Update the styles to match the home page layout
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -610,7 +629,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 20,
     paddingVertical: 15,
-    backgroundColor: "#15B2BF", // Changed from #93c3c7 to #15B2BF
+    backgroundColor: "#15B2BF",
   },
   statItem: {
     flexDirection: "row",
@@ -625,10 +644,10 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 14,
     marginRight: 8,
-    color: "#fff", // Changed to white for better contrast
+    color: "#fff",
   },
   levelContainer: {
-    backgroundColor: "#fff", // Changed to white
+    backgroundColor: "#fff",
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -636,7 +655,7 @@ const styles = StyleSheet.create({
   levelText: {
     fontSize: 14,
     fontWeight: "bold",
-    color: "#15B2BF", // Changed to match the background for nice contrast
+    color: "#15B2BF",
   },
   rankBadge: {
     paddingHorizontal: 10,
@@ -684,6 +703,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#eee",
     marginVertical: 10,
   },
+  horizontalLine: {
+    height: 1,
+    backgroundColor: "#eee",
+    marginTop: 10,
+    marginBottom: 15,
+    width: "100%",
+  },
   sectionTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
     fontSize: 20,
@@ -695,7 +721,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     marginHorizontal: 20,
-    marginBottom: 20,
+    marginBottom: 10,
   },
   tab: {
     paddingVertical: 8,
@@ -725,7 +751,19 @@ const styles = StyleSheet.create({
   },
   opportunitiesContainer: {
     flex: 1,
-    paddingHorizontal: 20,
+    width: "100%", // Take full width
+  },
+  opportunitiesContent: {
+    paddingBottom: 80, // Add padding at the bottom for the navigation bar
+    paddingHorizontal: 15, // Add horizontal padding
+  },
+  columnWrapper: {
+    justifyContent: "space-between", // Space evenly between items
+    paddingHorizontal: 5, // Add some padding
+  },
+  gridItem: {
+    width: "48%", // Each card takes up 48% of the width
+    marginBottom: 15, // Add margin between rows
   },
   emptyContainer: {
     flex: 1,

@@ -9,14 +9,19 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Image,
+  Dimensions,
 } from "react-native"
 import { useRouter, useLocalSearchParams } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { ArrowLeft, Calendar, MapPin } from "lucide-react-native"
-import { collection, query, getDocs, where } from "firebase/firestore"
+import { collection, query, getDocs, where, getDoc, doc } from "firebase/firestore"
 import { db } from "./firebase/config"
 import { useFonts } from "expo-font"
 import OpportunityCard, { type Opportunity } from "../components/opportunity-card"
+
+// Get screen width to calculate card width
+const screenWidth = Dimensions.get("window").width
+const cardWidth = (screenWidth - 40) / 2 // 40 is the total horizontal padding (20 on each side)
 
 export default function CityOpportunitiesScreen() {
   const router = useRouter()
@@ -32,6 +37,7 @@ export default function CityOpportunitiesScreen() {
   })
 
   useEffect(() => {
+    // Update the fetchCityOpportunities function to fetch organization details
     const fetchCityOpportunities = async () => {
       try {
         setLoading(true)
@@ -45,8 +51,8 @@ export default function CityOpportunitiesScreen() {
         const snapshot = await getDocs(cityOppsQuery)
 
         // Filter to only include current and future opportunities
-        const currentOpportunities = snapshot.docs
-          .map((doc) => {
+        const opportunitiesPromises = snapshot.docs
+          .filter((doc) => {
             const data = doc.data()
             // Parse the date string to a Date object
             let opportunityDate
@@ -58,25 +64,54 @@ export default function CityOpportunitiesScreen() {
 
             // Only include future opportunities
             if (opportunityDate && opportunityDate < now) {
-              return null // Skip past opportunities
+              return false // Skip past opportunities
+            }
+            return true
+          })
+          .map(async (document) => {
+            const data = document.data()
+
+            // Fetch organization data if createdBy is available
+            let orgName = data.organizationName || ""
+            let orgLogo = data.organizationLogo || ""
+
+            if (data.createdBy && (!orgName || !orgLogo)) {
+              try {
+                const orgDocRef = doc(db, "admins", data.createdBy)
+                const orgDocSnap = await getDoc(orgDocRef)
+
+                if (orgDocSnap.exists()) {
+                  const orgData = orgDocSnap.data()
+                  if (!orgName && orgData.organizationName) {
+                    orgName = orgData.organizationName as string
+                  }
+                  if (!orgLogo && orgData.photoURL) {
+                    orgLogo = orgData.photoURL as string
+                  }
+                }
+              } catch (error) {
+                console.error("Error fetching organization data:", error)
+              }
             }
 
             return {
-              id: doc.id,
+              id: document.id,
               name: data.name || "",
               imageUrl: data.imageUrl || "",
               date: data.date || "",
               time: data.time || "",
               city: data.city || "",
               volunteers: data.volunteers || "0",
-              organizationName: data.organizationName || "",
+              organizationName: orgName,
+              organizationLogo: orgLogo,
+              createdBy: data.createdBy || "",
               description: data.description || "",
               registeredCount: data.registeredCount || 0,
             }
           })
-          .filter(Boolean) // Remove null entries (past opportunities)
 
-        setOpportunities(currentOpportunities as Opportunity[])
+        const currentOpportunities = await Promise.all(opportunitiesPromises)
+        setOpportunities(currentOpportunities.filter(Boolean) as Opportunity[])
       } catch (error) {
         console.error("Error fetching city opportunities:", error)
         setOpportunities([])
@@ -100,6 +135,17 @@ export default function CityOpportunitiesScreen() {
 
   // Format the city name for display
   const formattedCityName = typeof cityName === "string" ? cityName : "City"
+
+  // Render item for the grid layout
+  const renderOpportunityItem = ({ item, index }: { item: Opportunity; index: number }) => {
+    if (!item) return null
+
+    return (
+      <View style={[styles.opportunityCardContainer, { width: cardWidth }]}>
+        <OpportunityCard opportunity={item} onPress={() => handleOpportunityPress(item.id)} />
+      </View>
+    )
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -129,7 +175,7 @@ export default function CityOpportunitiesScreen() {
         </View>
       </View>
 
-      {/* Opportunities List */}
+      {/* Opportunities Grid */}
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#15B2BF" />
@@ -137,11 +183,11 @@ export default function CityOpportunitiesScreen() {
       ) : (
         <FlatList
           data={opportunities}
-          renderItem={({ item }) => (
-            <OpportunityCard opportunity={item} onPress={() => handleOpportunityPress(item.id)} />
-          )}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.opportunitiesList}
+          renderItem={renderOpportunityItem}
+          keyExtractor={(item) => item?.id || Math.random().toString()}
+          contentContainerStyle={styles.opportunitiesGrid}
+          numColumns={2}
+          columnWrapperStyle={styles.row}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Image source={require("../assets/images/placeholder.png")} style={styles.emptyImage} />
@@ -218,8 +264,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  opportunitiesList: {
+  opportunitiesGrid: {
     padding: 20,
+  },
+  row: {
+    justifyContent: "space-between",
+  },
+  opportunityCardContainer: {
+    marginBottom: 16,
   },
   emptyContainer: {
     flex: 1,

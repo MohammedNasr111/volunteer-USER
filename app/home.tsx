@@ -9,6 +9,7 @@ import {
   FlatList,
   ActivityIndicator,
   SafeAreaView,
+  Dimensions,
 } from "react-native"
 import { useRouter, useFocusEffect } from "expo-router"
 import { StatusBar } from "expo-status-bar"
@@ -31,6 +32,9 @@ import CauseCard, { type Cause } from "../components/cause-card"
 import LocationCard, { type Location } from "../components/location-card"
 import NGOFooter from "../components/ngo-footer"
 import OrganizationCard, { type Organization } from "../components/organization-card"
+
+// Get screen width for calculating card width
+const screenWidth = Dimensions.get("window").width
 
 // Define the tab options
 const tabs = [
@@ -773,6 +777,15 @@ export default function HomeScreen() {
     )
   }
 
+  // Render opportunity item for grid layout
+  const renderOpportunityItem = ({ item, index }: { item: Opportunity; index: number }) => {
+    return (
+      <View style={styles.gridItem}>
+        <OpportunityCard opportunity={item} onPress={() => handleOpportunityPress(item.id)} />
+      </View>
+    )
+  }
+
   // Render the organization view
   const renderOrganizationsView = () => {
     if (loadingOrganizations) {
@@ -878,14 +891,15 @@ export default function HomeScreen() {
               <Text style={styles.emptyOpportunitiesText}>No new opportunities available</Text>
             </View>
           ) : (
-            <View style={styles.opportunitiesContainer}>
-              {newOpportunities.map((opportunity) => (
-                <OpportunityCard
-                  key={opportunity.id}
-                  opportunity={opportunity}
-                  onPress={() => handleOpportunityPress(opportunity.id)}
-                />
-              ))}
+            <View style={styles.opportunitiesGrid}>
+              <FlatList
+                data={newOpportunities}
+                renderItem={renderOpportunityItem}
+                keyExtractor={(item) => item.id}
+                numColumns={2}
+                columnWrapperStyle={styles.columnWrapper}
+                scrollEnabled={false}
+              />
             </View>
           )}
         </View>
@@ -902,14 +916,15 @@ export default function HomeScreen() {
               <Text style={styles.emptyOpportunitiesText}>No popular opportunities available</Text>
             </View>
           ) : (
-            <View style={styles.opportunitiesContainer}>
-              {popularOpportunities.map((opportunity) => (
-                <OpportunityCard
-                  key={opportunity.id}
-                  opportunity={opportunity}
-                  onPress={() => handleOpportunityPress(opportunity.id)}
-                />
-              ))}
+            <View style={styles.opportunitiesGrid}>
+              <FlatList
+                data={popularOpportunities}
+                renderItem={renderOpportunityItem}
+                keyExtractor={(item) => item.id}
+                numColumns={2}
+                columnWrapperStyle={styles.columnWrapper}
+                scrollEnabled={false}
+              />
             </View>
           )}
         </View>
@@ -1102,6 +1117,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
+  },
+  opportunitiesGrid: {
+    width: "100%",
+  },
+  columnWrapper: {
+    justifyContent: "space-between",
+  },
+  gridItem: {
+    width: "48%", // Each card takes up 48% of the width
+    marginBottom: 15, // Add margin between rows
   },
   loader: {
     marginVertical: 20,

@@ -30,9 +30,20 @@ interface OpportunityCardProps {
 }
 
 const OpportunityCard: React.FC<OpportunityCardProps> = ({ opportunity, onPress }) => {
-  const [registeredCount, setRegisteredCount] = useState(opportunity.registeredCount || 0)
-  const [orgName, setOrgName] = useState(opportunity.organizationName || "")
-  const [orgLogo, setOrgLogo] = useState(opportunity.organizationLogo || "")
+  // Add safety check for undefined opportunity
+  if (!opportunity) {
+    return null
+  }
+
+  const initialRegisteredCount = opportunity.registeredCount || 0
+  const initialOrgName = opportunity.organizationName || ""
+  const initialOrgLogo = opportunity.organizationLogo || ""
+
+  const [registeredCount, setRegisteredCount] = useState(initialRegisteredCount)
+  const [orgName, setOrgName] = useState(initialOrgName)
+  const [orgLogo, setOrgLogo] = useState(initialOrgLogo)
+
+  const [isOrgDataLoading, setIsOrgDataLoading] = useState(false)
 
   // Format date and time for display (e.g., "Tue, 8 Apr • 08:00")
   const formatDateAndTime = (dateString?: string, timeString?: string) => {
@@ -134,8 +145,9 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({ opportunity, onPress 
       })
 
       // Fetch organization data if needed
-      if (opportunity.createdBy && (!orgName || !orgLogo)) {
+      if (opportunity.createdBy) {
         const fetchOrgData = async () => {
+          setIsOrgDataLoading(true)
           try {
             const orgDoc = await getDoc(doc(db, "admins", opportunity.createdBy || ""))
             if (orgDoc.exists()) {
@@ -149,6 +161,8 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({ opportunity, onPress 
             }
           } catch (error) {
             console.error("Error fetching organization data:", error)
+          } finally {
+            setIsOrgDataLoading(false)
           }
         }
         fetchOrgData()
@@ -157,7 +171,7 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({ opportunity, onPress 
       // Clean up the listener when the component unmounts
       return () => unsubscribe()
     }
-  }, [opportunity.id, opportunity.createdBy, orgName, orgLogo])
+  }, [opportunity.id, opportunity.createdBy])
 
   // Get the display name and logo for the organization
   const displayOrgName = orgName || opportunity.organizationName || "Unknown Organization"
@@ -193,6 +207,7 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({ opportunity, onPress 
         <Text style={styles.title} numberOfLines={2}>
           {opportunity.name}
         </Text>
+        {/* Organization */}
         <View style={styles.organizationRow}>
           {displayOrgLogo ? (
             <Image source={{ uri: displayOrgLogo }} style={styles.orgLogo} />
@@ -213,11 +228,10 @@ const OpportunityCard: React.FC<OpportunityCardProps> = ({ opportunity, onPress 
 
 const styles = StyleSheet.create({
   container: {
-    width: "48%",
+    width: "100%", // Changed from 48% to 100% to fill the parent container
     backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
-    marginBottom: 16,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -329,3 +343,4 @@ const styles = StyleSheet.create({
 })
 
 export default OpportunityCard
+
