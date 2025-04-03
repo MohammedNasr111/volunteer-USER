@@ -87,6 +87,7 @@ export default function HomeScreen() {
     "Alata-Regular": require("../assets/fonts/Alata-Regular.ttf"),
     "AbhayaLibre-Regular": require("../assets/fonts/AbhayaLibre-Regular.ttf"),
     "AbhayaLibre-ExtraBold": require("../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
+    "Lato-Bold": require("../assets/fonts/Lato-Bold.ttf"),
   })
 
   // Function to fetch organizations
@@ -150,23 +151,21 @@ export default function HomeScreen() {
         }
       }
 
-      // If user has cause preferences, filter opportunities by those causes
-      let newOppsQuery
-      let popularOppsQuery
+      // For new opportunities, filter by user preferences
+      const newOppsQuery = query(collection(db, "causes"))
+
+      // For popular opportunities, get all opportunities regardless of user preferences
+      const popularOppsQuery = query(collection(db, "causes"))
 
       if (userCausePreferences.length > 0) {
         console.log("User has preferences:", userCausePreferences)
-
-        // Check if the causes in Firestore might be stored with different casing
-        // Try a more general query first to see what data we get
-        newOppsQuery = query(collection(db, "causes"))
-        popularOppsQuery = query(collection(db, "causes"))
+        setIsFiltered(true)
 
         // We'll filter the results in memory after fetching
         const newOppsSnapshot = await getDocs(newOppsQuery)
         console.log(`Retrieved ${newOppsSnapshot.docs.length} total causes documents`)
 
-        // Now filter in memory based on cause types
+        // Now filter in memory based on cause types for new opportunities
         const newOppsData = await Promise.all(
           newOppsSnapshot.docs
             .filter((docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
@@ -257,72 +256,60 @@ export default function HomeScreen() {
         setNewOpportunities(filteredNewOppsData.slice(0, 4))
         console.log(`Filtered to ${filteredNewOppsData.length} matching opportunities`)
 
-        // Do the same for popular opportunities
+        // For popular opportunities, get ALL opportunities regardless of user preferences
         const popularOppsSnapshot = await getDocs(popularOppsQuery)
         const popularOppsData = await Promise.all(
-          popularOppsSnapshot.docs
-            .filter((docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
-              const data = docSnapshot.data() as CauseData
-              const docCauseTypes = data.causeTypes || []
+          popularOppsSnapshot.docs.map(async (docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+            const data = docSnapshot.data() as CauseData
+            let opportunityDate: Date | null = null
+            try {
+              opportunityDate = data.date ? new Date(data.date) : null
+            } catch (e) {
+              opportunityDate = null
+            }
 
-              // Check if any of the user's preferences match this document's cause types
-              return userCausePreferences.some((pref) =>
-                docCauseTypes.some(
-                  (docType: string) => typeof docType === "string" && docType.toLowerCase() === pref.toLowerCase(),
-                ),
-              )
-            })
-            .map(async (docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
-              // Same mapping logic as above
-              const data = docSnapshot.data() as CauseData
-              let opportunityDate: Date | null = null
+            // Only include future opportunities
+            if (opportunityDate && opportunityDate < now) {
+              return null // Skip past opportunities
+            }
+
+            // Fetch organization data if createdBy is available
+            let orgName = data.organizationName || ""
+            let orgLogo = data.organizationLogo || ""
+
+            if (data.createdBy && (!orgName || !orgLogo)) {
               try {
-                opportunityDate = data.date ? new Date(data.date) : null
-              } catch (e) {
-                opportunityDate = null
-              }
-
-              if (opportunityDate && opportunityDate < now) {
-                return null
-              }
-
-              // Fetch organization data if createdBy is available
-              let orgName = data.organizationName || ""
-              let orgLogo = data.organizationLogo || ""
-
-              if (data.createdBy && (!orgName || !orgLogo)) {
-                try {
-                  const orgDoc = await getDoc(doc(db, "admins", data.createdBy))
-                  if (orgDoc.exists()) {
-                    const orgData = orgDoc.data() as OrgData
-                    if (!orgName && orgData.organizationName) {
-                      orgName = orgData.organizationName
-                    }
-                    if (!orgLogo && orgData.photoURL) {
-                      orgLogo = orgData.photoURL
-                    }
+                const orgDoc = await getDoc(doc(db, "admins", data.createdBy))
+                if (orgDoc.exists()) {
+                  const orgData = orgDoc.data() as OrgData
+                  if (!orgName && orgData.organizationName) {
+                    orgName = orgData.organizationName
                   }
-                } catch (error) {
-                  console.error("Error fetching organization data:", error)
+                  if (!orgLogo && orgData.photoURL) {
+                    orgLogo = orgData.photoURL
+                  }
                 }
+              } catch (error) {
+                console.error("Error fetching organization data:", error)
               }
+            }
 
-              return {
-                id: docSnapshot.id,
-                name: data.name || "",
-                imageUrl: data.imageUrl || "",
-                date: data.date || "",
-                time: data.time || "",
-                city: data.city || "",
-                volunteers: data.volunteers || "0",
-                organizationName: orgName,
-                organizationLogo: orgLogo,
-                createdBy: data.createdBy || "",
-                description: data.description || "",
-                registeredCount: data.registeredCount || 0,
-                createdAt: data.createdAt || "",
-              } as Opportunity
-            }),
+            return {
+              id: docSnapshot.id,
+              name: data.name || "",
+              imageUrl: data.imageUrl || "",
+              date: data.date || "",
+              time: data.time || "",
+              city: data.city || "",
+              volunteers: data.volunteers || "0",
+              organizationName: orgName,
+              organizationLogo: orgLogo,
+              createdBy: data.createdBy || "",
+              description: data.description || "",
+              registeredCount: data.registeredCount || 0,
+              createdAt: data.createdAt || "",
+            } as Opportunity
+          }),
         )
 
         // Filter out null entries and sort
@@ -336,12 +323,12 @@ export default function HomeScreen() {
           return volunteersB - volunteersA
         })
 
+        // Limit to 4 items after sorting
         setPopularOpportunities(filteredPopularOppsData.slice(0, 4))
       } else {
-        // If no preferences, show all opportunities
-        newOppsQuery = query(collection(db, "causes"))
-        popularOppsQuery = query(collection(db, "causes"))
+        // If no preferences, show all opportunities for both sections
         console.log("No user preferences found, showing all opportunities")
+        setIsFiltered(false)
 
         // Fetch new opportunities
         const newOppsSnapshot = await getDocs(newOppsQuery)
@@ -417,7 +404,7 @@ export default function HomeScreen() {
         // Limit to 4 items after sorting
         setNewOpportunities(filteredNewOppsData.slice(0, 4))
 
-        // Fetch popular opportunities
+        // Fetch popular opportunities - same as new opportunities but sorted differently
         const popularOppsSnapshot = await getDocs(popularOppsQuery)
         console.log(`Retrieved ${popularOppsSnapshot.docs.length} documents from popular opportunities query`)
 
@@ -490,8 +477,6 @@ export default function HomeScreen() {
         // Limit to 4 items after sorting
         setPopularOpportunities(filteredPopularOppsData.slice(0, 4))
       }
-
-      setIsFiltered(userCausePreferences.length > 0)
     } catch (error) {
       console.error("Error fetching opportunities:", error)
       setNewOpportunities([])
@@ -547,7 +532,7 @@ export default function HomeScreen() {
           const snapshot = await getDocs(cityOppsQuery)
           console.log(`City ${cityName}: Retrieved ${snapshot.docs.length} total opportunities`)
 
-          // Filter to only include current and future opportunities that match user preferences
+          // Filter to only include current and future opportunities
           const currentOpportunities = snapshot.docs.filter((docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
             const data = docSnapshot.data() as CauseData
 
@@ -561,17 +546,8 @@ export default function HomeScreen() {
               return false
             }
 
-            // If user has preferences, check if this opportunity matches any of them
-            if (userCausePreferences.length > 0) {
-              const docCauseTypes = data.causeTypes || []
-              return userCausePreferences.some((pref) =>
-                docCauseTypes.some(
-                  (docType: string) => typeof docType === "string" && docType.toLowerCase() === pref.toLowerCase(),
-                ),
-              )
-            }
-
-            // If no user preferences, include all current/future opportunities
+            // Include all current/future opportunities regardless of user preferences
+            // We want to show the total count of opportunities in each city
             return true
           })
 
@@ -593,8 +569,8 @@ export default function HomeScreen() {
         return countB - countA
       })
 
-      // Take top cities or all if less than 4
-      setCities(citiesWithCounts.slice(0, 4))
+      // Show all cities
+      setCities(citiesWithCounts)
     } catch (error) {
       console.error("Error fetching cities:", error)
       setCities([])
@@ -656,7 +632,17 @@ export default function HomeScreen() {
               }
 
               // Use the normalized cause ID to look up the image
-              const causeImage = causeImageMap[normalizedCauseId] || require("../assets/images/placeholder.png")
+              let causeImage
+              try {
+                causeImage = causeImageMap[normalizedCauseId]
+                // Test if the image can be loaded
+                if (!causeImage) {
+                  causeImage = require("../assets/images/placeholder.png")
+                }
+              } catch (error) {
+                console.error(`Error loading image for cause ${normalizedCauseId}:`, error)
+                causeImage = require("../assets/images/placeholder.png")
+              }
 
               return {
                 id: causeId,
@@ -732,10 +718,10 @@ export default function HomeScreen() {
     } as any)
   }
 
+  // Update the handleUpdateLocation function to navigate to the location screen
   const handleUpdateLocation = () => {
-    // For now, just log that location update was requested
-    console.log("Update location requested")
-    // In a real app, you'd navigate to a location update screen
+    // Navigate to location selection screen
+    router.push("/location" as any)
   }
 
   const handleChangePreferences = () => {
@@ -1186,6 +1172,12 @@ const styles = StyleSheet.create({
     padding: 40,
     alignItems: "center",
     justifyContent: "center",
+  },
+  disabledButton: {
+    opacity: 0.5,
+  },
+  disabledButtonText: {
+    color: "#999",
   },
 })
 

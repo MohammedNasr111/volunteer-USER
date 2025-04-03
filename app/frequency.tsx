@@ -80,6 +80,7 @@ export default function FrequencyScreen() {
     setSelectedFrequency(frequencyId)
   }
 
+  // Update the handleNext function to navigate to the location screen instead of home
   const handleNext = async () => {
     if (!selectedFrequency) return
 
@@ -103,6 +104,7 @@ export default function FrequencyScreen() {
     }
   }
 
+  // Update the handleSkip function to also navigate to location screen
   const handleSkip = () => {
     // Navigate to location screen instead of home
     router.push({ pathname: "/location" as any })
@@ -290,3 +292,4 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 })
+
