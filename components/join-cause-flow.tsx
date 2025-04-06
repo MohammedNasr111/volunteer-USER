@@ -13,7 +13,7 @@ import {
   Alert,
 } from "react-native"
 import { ref, set, get, runTransaction, onValue } from "firebase/database"
-import { doc, updateDoc, arrayUnion, getDoc } from "firebase/firestore"
+import { doc, updateDoc, arrayUnion, arrayRemove, getDoc, collection, addDoc } from "firebase/firestore"
 import { auth, db, realtimeDb } from "../app/firebase/config"
 import { ArrowLeft, CheckCircle2, X } from "lucide-react-native"
 
@@ -47,6 +47,7 @@ export default function JoinCauseFlow({
   const [userData, setUserData] = useState<any>(null)
   const [errorMessage, setErrorMessage] = useState("")
   const [alreadyRegistered, setAlreadyRegistered] = useState(false)
+  const [joining, setJoining] = useState(false)
 
   // Fetch user data and check if already registered
   useEffect(() => {
@@ -116,13 +117,124 @@ export default function JoinCauseFlow({
     }
   }
 
-  // Updated handleSignUp function with better error handling and separation of concerns
+  // Add a check at the beginning of the handleJoin function to prevent joining past causes
   const handleSignUp = async () => {
     try {
       setLoading(true)
       setErrorMessage("")
-      const userId = auth.currentUser?.uid
 
+      // Check if the cause date is in the past
+      const causeDateObj = new Date(causeDate)
+      const today = new Date()
+      today.setHours(0, 0, 0, 0) // Reset time to start of day for comparison
+
+      if (causeDateObj < today) {
+        Alert.alert("Cannot Join", "This cause has already passed. You can only join upcoming causes.")
+        setLoading(false)
+        return
+      }
+
+      // Check if user is already registered for a cause on the same day
+      const userId = auth.currentUser?.uid
+      if (!userId) {
+        Alert.alert("Error", "You must be logged in to register")
+        setLoading(false)
+        return
+      }
+
+      const userDoc = await getDoc(doc(db, "users", userId))
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        const registeredOpportunityIds = userData.registered_opportunities || []
+
+        // If user has registered opportunities, check for same-day conflicts
+        if (registeredOpportunityIds.length > 0) {
+          const opportunityDate = new Date(causeDate)
+          opportunityDate.setHours(0, 0, 0, 0) // Reset time to start of day for comparison
+
+          // Check each registered opportunity for date conflicts
+          for (const oppId of registeredOpportunityIds) {
+            if (oppId === causeId) continue // Skip the current opportunity
+
+            const oppDoc = await getDoc(doc(db, "causes", oppId))
+            if (oppDoc.exists()) {
+              const oppData = oppDoc.data()
+              const oppDate = new Date(oppData.date)
+              oppDate.setHours(0, 0, 0, 0) // Reset time to start of day for comparison
+
+              // If dates match, we have a conflict
+              if (oppDate.getTime() === opportunityDate.getTime()) {
+                // Show conflict alert
+                Alert.alert(
+                  "Schedule Conflict",
+                  `You're already registered for "${oppData.name}" on this day. For safety reasons and to allow others to participate, you can only join one cause per day.`,
+                  [
+                    {
+                      text: "Stick with previous cause",
+                      style: "cancel",
+                      onPress: () => {
+                        setLoading(false)
+                        onClose()
+                      },
+                    },
+                    {
+                      text: "Cancel previous & join this",
+                      style: "destructive",
+                      onPress: async () => {
+                        try {
+                          // Cancel previous registration
+                          const prevParticipantRef = ref(realtimeDb, `causes/${oppId}/participants/${userId}`)
+                          await set(prevParticipantRef, null)
+
+                          const prevCountRef = ref(realtimeDb, `causes/${oppId}/participantsCount`)
+                          await runTransaction(prevCountRef, (currentValue) => {
+                            return Math.max(0, (currentValue || 0) - 1)
+                          })
+
+                          // Update Firestore
+                          await updateDoc(doc(db, "users", userId), {
+                            registered_opportunities: arrayRemove(oppId),
+                          })
+
+                          try {
+                            await updateDoc(doc(db, "causes", oppId), {
+                              registered_users: arrayRemove(userId),
+                            })
+                          } catch (error) {
+                            console.error("Error updating previous cause document:", error)
+                          }
+
+                          // Now proceed with the join flow for the new cause
+                          continueWithJoin()
+                        } catch (error) {
+                          console.error("Error canceling previous registration:", error)
+                          Alert.alert("Error", "Failed to cancel previous registration")
+                          setLoading(false)
+                        }
+                      },
+                    },
+                  ],
+                )
+                return
+              }
+            }
+          }
+        }
+      }
+
+      // If no conflicts, proceed with join
+      continueWithJoin()
+    } catch (error) {
+      console.error("Error in handleJoin:", error)
+      Alert.alert("Error", "Failed to join this cause")
+      setLoading(false)
+    }
+  }
+
+  // Add the continueWithJoin function that contains the original join logic
+  const continueWithJoin = async () => {
+    try {
+      const userId = auth.currentUser?.uid
       if (!userId) {
         throw new Error("User not authenticated")
       }
@@ -225,6 +337,31 @@ export default function JoinCauseFlow({
       } catch (error) {
         // Log the error but don't fail the operation
         console.error("Error updating Firestore:", error)
+      }
+
+      // Create a notification for the signup
+      try {
+        const opportunity = {
+          name: causeName,
+          date: causeDate,
+          time: causeTime,
+        }
+        const notificationsRef = collection(db, "notifications")
+        await addDoc(notificationsRef, {
+          userId: userId,
+          type: "signup",
+          title: "Successful Sign Up!",
+          message: `You have successfully signed up for "${opportunity?.name}"`,
+          timestamp: new Date().toISOString(),
+          read: false,
+          causeName: opportunity?.name,
+          causeId: causeId,
+          date: opportunity?.date,
+          time: opportunity?.time,
+        })
+      } catch (error) {
+        console.error("Error creating signup notification:", error)
+        // Continue anyway since this is non-critical
       }
 
       // If we got here, the join was successful

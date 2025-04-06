@@ -543,7 +543,7 @@ function OpportunityDetailScreen() {
     )
   }
 
-  // Update the handleRegister function to use transactions for better reliability
+  // Update the handleRegister function to check for same-day conflicts
   const handleRegister = async () => {
     try {
       setRegistering(true)
@@ -555,6 +555,36 @@ function OpportunityDetailScreen() {
 
       if (!opportunity) {
         Alert.alert("Error", "Opportunity details not available")
+        return
+      }
+
+      // Check if the opportunity date is in the past
+      const opportunityDate = new Date(opportunity.date)
+      const today = new Date()
+      today.setHours(0, 0, 0, 0) // Reset time to start of day for comparison
+
+      if (opportunityDate < today) {
+        Alert.alert("Cannot Join", "This cause has already passed. You can only join upcoming causes.")
+        setRegistering(false)
+        return
+      }
+
+      // Check if the user has been removed from this cause
+      const removalsRef = collection(db, "participantRemovals")
+      const removalsQuery = query(removalsRef, where("userId", "==", userId), where("causeId", "==", id))
+
+      const removalsSnapshot = await getDocs(removalsQuery)
+      if (!removalsSnapshot.empty) {
+        // User has been removed from this cause
+        const removalDoc = removalsSnapshot.docs[0]
+        const removalData = removalDoc.data()
+
+        Alert.alert(
+          "Cannot Join",
+          `You were previously removed from this cause due to: ${removalData.reason}. Please contact the organizer if you believe this was a mistake.`,
+          [{ text: "OK", style: "cancel" }],
+        )
+        setRegistering(false)
         return
       }
 
@@ -578,6 +608,7 @@ function OpportunityDetailScreen() {
             },
           },
         ])
+        setRegistering(false)
         return
       }
 
@@ -641,7 +672,86 @@ function OpportunityDetailScreen() {
 
         Alert.alert("Success", "You have unregistered from this opportunity")
       } else {
-        // Register - this will be handled by the JoinCauseFlow component
+        // Check if user is already registered for a cause on the same day
+        const userDoc = await getDoc(doc(db, "users", userId))
+        if (userDoc.exists()) {
+          const userData = userDoc.data()
+          const registeredOpportunityIds = userData.registered_opportunities || []
+
+          // If user has registered opportunities, check for same-day conflicts
+          if (registeredOpportunityIds.length > 0) {
+            const opportunityDate = new Date(opportunity.date)
+            opportunityDate.setHours(0, 0, 0, 0) // Reset time to start of day for comparison
+
+            // Check each registered opportunity for date conflicts
+            for (const oppId of registeredOpportunityIds) {
+              if (oppId === id) continue // Skip the current opportunity
+
+              const oppDoc = await getDoc(doc(db, "causes", oppId))
+              if (oppDoc.exists()) {
+                const oppData = oppDoc.data()
+                const oppDate = new Date(oppData.date)
+                oppDate.setHours(0, 0, 0, 0) // Reset time to start of day for comparison
+
+                // If dates match, we have a conflict
+                if (oppDate.getTime() === opportunityDate.getTime()) {
+                  // Show conflict alert
+                  Alert.alert(
+                    "Schedule Conflict",
+                    `You're already registered for "${oppData.name}" on this day. For safety reasons and to allow others to participate, you can only join one cause per day.`,
+                    [
+                      {
+                        text: "Stick with previous cause",
+                        style: "cancel",
+                        onPress: () => setRegistering(false),
+                      },
+                      {
+                        text: "Cancel previous & join this",
+                        style: "destructive",
+                        onPress: async () => {
+                          try {
+                            // Cancel previous registration
+                            const prevParticipantRef = ref(realtimeDb, `causes/${oppId}/participants/${userId}`)
+                            await set(prevParticipantRef, null)
+
+                            const prevCountRef = ref(realtimeDb, `causes/${oppId}/participantsCount`)
+                            await runTransaction(prevCountRef, (currentValue) => {
+                              return Math.max(0, (currentValue || 0) - 1)
+                            })
+
+                            // Update Firestore
+                            await updateDoc(doc(db, "users", userId), {
+                              registered_opportunities: arrayRemove(oppId),
+                            })
+
+                            try {
+                              await updateDoc(doc(db, "causes", oppId), {
+                                registered_users: arrayRemove(userId),
+                              })
+                            } catch (error) {
+                              console.error("Error updating previous cause document:", error)
+                            }
+
+                            // Now proceed with the join flow for the new cause
+                            setShowJoinFlow(true)
+                          } catch (error) {
+                            console.error("Error canceling previous registration:", error)
+                            Alert.alert("Error", "Failed to cancel previous registration")
+                          } finally {
+                            setRegistering(false)
+                          }
+                        },
+                      },
+                    ],
+                  )
+                  return
+                }
+              }
+            }
+          }
+        }
+
+        // If no conflicts, proceed with join flow
         setShowJoinFlow(true)
       }
     } catch (error) {
@@ -846,16 +956,30 @@ function OpportunityDetailScreen() {
         <TouchableOpacity
           style={[
             styles.joinButton,
-            isRegistered ? styles.cancelButton : isFull && !isRegistered ? styles.disabledButton : {},
+            isRegistered
+              ? styles.cancelButton
+              : isFull && !isRegistered
+                ? styles.disabledButton
+                : new Date(opportunity.date) < new Date()
+                  ? styles.disabledButton
+                  : {},
           ]}
           onPress={() => (isRegistered ? handleRegister() : setShowJoinFlow(true))}
-          disabled={registering || (isFull && !isRegistered)}
+          disabled={
+            registering || (isFull && !isRegistered) || (!isRegistered && new Date(opportunity.date) < new Date())
+          }
         >
           {registering ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
             <Text style={styles.joinButtonText}>
-              {isRegistered ? "Cancel Registration" : isFull && !isRegistered ? "Event Full" : "Join & Sign Up"}
+              {isRegistered
+                ? "Cancel Registration"
+                : isFull && !isRegistered
+                  ? "Event Full"
+                  : new Date(opportunity.date) < new Date()
+                    ? "Event Passed"
+                    : "Join & Sign Up"}
             </Text>
           )}
         </TouchableOpacity>
@@ -988,10 +1112,7 @@ function OpportunityDetailScreen() {
               <ParticipantCounter current={registeredCount} max={maxParticipants} />
             </View>
           ) : (
-            <View style={styles.noAttendeesContainer}>
-              <Text style={styles.noAttendeesText}>Be the first to join this opportunity!</Text>
-              <ParticipantCounter current={registeredCount} max={maxParticipants} />
-            </View>
+            <View style={styles.noAttendeesContainer}></View>
           )}
         </View>
 
@@ -1067,16 +1188,30 @@ function OpportunityDetailScreen() {
           style={[
             styles.joinButton,
             styles.bottomJoinButton,
-            isRegistered ? styles.cancelButton : isFull && !isRegistered ? styles.disabledButton : {},
+            isRegistered
+              ? styles.cancelButton
+              : isFull && !isRegistered
+                ? styles.disabledButton
+                : new Date(opportunity.date) < new Date()
+                  ? styles.disabledButton
+                  : {},
           ]}
           onPress={() => (isRegistered ? handleRegister() : setShowJoinFlow(true))}
-          disabled={registering || (isFull && !isRegistered)}
+          disabled={
+            registering || (isFull && !isRegistered) || (!isRegistered && new Date(opportunity.date) < new Date())
+          }
         >
           {registering ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
             <Text style={styles.joinButtonText}>
-              {isRegistered ? "Cancel Registration" : isFull && !isRegistered ? "Event Full" : "Join & Sign Up"}
+              {isRegistered
+                ? "Cancel Registration"
+                : isFull && !isRegistered
+                  ? "Event Full"
+                  : new Date(opportunity.date) < new Date()
+                    ? "Event Passed"
+                    : "Join & Sign Up"}
             </Text>
           )}
         </TouchableOpacity>

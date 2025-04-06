@@ -1,7 +1,7 @@
 // app/firebase/config.js
 import { initializeApp } from "firebase/app"
 import { initializeAuth, getReactNativePersistence } from "firebase/auth"
-import { getFirestore, collection, getDocs } from "firebase/firestore"
+import { getFirestore, collection, getDocs, updateDoc, doc } from "firebase/firestore"
 import { getStorage } from "firebase/storage"
 import { getDatabase, ref, get, set } from "firebase/database" // Add this import
 import AsyncStorage from "@react-native-async-storage/async-storage"
@@ -33,6 +33,19 @@ const storage = getStorage(app)
 
 // Initialize Realtime Database
 const realtimeDb = getDatabase(app)
+
+// Mark a participant removal notification as seen
+export const markRemovalAsSeen = async (removalId) => {
+  try {
+    await updateDoc(doc(db, "participantRemovals", removalId), {
+      seen: true,
+    })
+    return true
+  } catch (error) {
+    console.error("Error marking removal as seen:", error)
+    return false
+  }
+}
 
 // Utility function to fix participant counts (for admin use)
 export const fixParticipantCounts = async (causeId) => {
@@ -108,6 +121,4 @@ export { app, auth, db, storage, realtimeDb }
 export default function FirebaseConfig() {
   return null
 }
-
-// Firebase configuration
 

@@ -5,9 +5,10 @@ import { Home, Clock, Bell, User } from "lucide-react-native"
 
 type BottomNavigationProps = {
   activeTab: "home" | "history" | "notifications" | "profile"
+  notificationCount?: number
 }
 
-export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
+export default function BottomNavigation({ activeTab, notificationCount = 0 }: BottomNavigationProps) {
   const router = useRouter()
 
   // Use a more direct approach to navigation to avoid TypeScript issues
@@ -29,7 +30,14 @@ export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.tabItem} onPress={navigateToNotifications} activeOpacity={0.7}>
-        <Bell size={22} color={activeTab === "notifications" ? "#15B2BF" : "#666"} />
+        <View style={styles.notificationIconContainer}>
+          <Bell size={22} color={activeTab === "notifications" ? "#15B2BF" : "#666"} />
+          {notificationCount > 0 && (
+            <View style={styles.badgeContainer}>
+              <Text style={styles.badgeText}>{notificationCount > 99 ? "99+" : notificationCount}</Text>
+            </View>
+          )}
+        </View>
         <Text style={[styles.tabText, activeTab === "notifications" && styles.activeTabText]}>Notifications</Text>
       </TouchableOpacity>
 
@@ -73,6 +81,26 @@ const styles = StyleSheet.create({
   activeTabText: {
     color: "#15B2BF",
     fontWeight: "500",
+  },
+  notificationIconContainer: {
+    position: "relative",
+  },
+  badgeContainer: {
+    position: "absolute",
+    top: -5,
+    right: -10,
+    backgroundColor: "#FF4757",
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    color: "white",
+    fontSize: 10,
+    fontWeight: "bold",
   },
 })
 
