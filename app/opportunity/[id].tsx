@@ -121,6 +121,15 @@ function OpportunityDetailScreen() {
   const [showJoinFlow, setShowJoinFlow] = useState(false)
   // Add this state to track actual participants from Realtime Database
   const [actualParticipants, setActualParticipants] = useState<Record<string, any>>({})
+  // Add this state to track if there's a same-day conflict
+  const [sameDayConflict, setSameDayConflict] = useState<{
+    exists: boolean
+    conflictingCause?: {
+      id: string
+      name: string
+      organizationName: string
+    }
+  }>({ exists: false })
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -473,11 +482,78 @@ function OpportunityDetailScreen() {
     }
   }, [id])
 
+  // Add this function to check for same-day conflicts
+  const checkForSameDayConflicts = useCallback(async () => {
+    if (!opportunity || !auth.currentUser?.uid) return
+
+    try {
+      const userId = auth.currentUser.uid
+      const opportunityDate = new Date(opportunity.date)
+      opportunityDate.setHours(0, 0, 0, 0) // Reset time to start of day for comparison
+
+      const userDoc = await getDoc(doc(db, "users", userId))
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        const registeredOpportunityIds = userData.registered_opportunities || []
+
+        // If user has registered opportunities, check for same-day conflicts
+        if (registeredOpportunityIds.length > 0) {
+          for (const oppId of registeredOpportunityIds) {
+            if (oppId === id) continue // Skip the current opportunity
+
+            const oppDoc = await getDoc(doc(db, "causes", oppId))
+            if (oppDoc.exists()) {
+              const oppData = oppDoc.data()
+              const oppDate = new Date(oppData.date)
+              oppDate.setHours(0, 0, 0, 0) // Reset time to start of day for comparison
+
+              // If dates match, we have a conflict
+              if (oppDate.getTime() === opportunityDate.getTime()) {
+                // Fetch the organization name properly
+                let organizationName = oppData.organizationName || ""
+
+                // If the organization name isn't directly in the cause data, try to fetch it
+                if (!organizationName && oppData.createdBy) {
+                  try {
+                    const orgDoc = await getDoc(doc(db, "admins", oppData.createdBy))
+                    if (orgDoc.exists()) {
+                      const orgData = orgDoc.data()
+                      organizationName = orgData.organizationName || ""
+                    }
+                  } catch (error) {
+                    console.error("Error fetching organization details:", error)
+                  }
+                }
+
+                setSameDayConflict({
+                  exists: true,
+                  conflictingCause: {
+                    id: oppId,
+                    name: oppData.name || "Unknown Cause",
+                    organizationName: organizationName || "Organization",
+                  },
+                })
+                return
+              }
+            }
+          }
+        }
+
+        // No conflicts found
+        setSameDayConflict({ exists: false })
+      }
+    } catch (error) {
+      console.error("Error checking for same-day conflicts:", error)
+      setSameDayConflict({ exists: false })
+    }
+  }, [opportunity, id])
+
   useEffect(() => {
     fetchOpportunityDetails()
     ensureParticipantsCount()
     fetchActualParticipants() // Add this line to fetch actual participants
-  }, [fetchOpportunityDetails, ensureParticipantsCount, fetchActualParticipants])
+    checkForSameDayConflicts() // Add this line
+  }, [fetchOpportunityDetails, ensureParticipantsCount, fetchActualParticipants, checkForSameDayConflicts])
 
   // Add this useEffect to listen for realtime updates to participants
   useEffect(() => {
@@ -762,6 +838,53 @@ function OpportunityDetailScreen() {
     }
   }
 
+  // Add this function to handle canceling the conflicting registration
+  const handleCancelConflictingRegistration = async () => {
+    if (!sameDayConflict.exists || !sameDayConflict.conflictingCause || !auth.currentUser?.uid) return
+
+    try {
+      setRegistering(true)
+      const userId = auth.currentUser.uid
+      const oppId = sameDayConflict.conflictingCause.id
+
+      // Cancel previous registration
+      const prevParticipantRef = ref(realtimeDb, `causes/${oppId}/participants/${userId}`)
+      await set(prevParticipantRef, null)
+
+      const prevCountRef = ref(realtimeDb, `causes/${oppId}/participantsCount`)
+      await runTransaction(prevCountRef, (currentValue) => {
+        return Math.max(0, (currentValue || 0) - 1)
+      })
+
+      // Update Firestore
+      await updateDoc(doc(db, "users", userId), {
+        registered_opportunities: arrayRemove(oppId),
+      })
+
+      try {
+        await updateDoc(doc(db, "causes", oppId), {
+          registered_users: arrayRemove(userId),
+        })
+      } catch (error) {
+        console.error("Error updating previous cause document:", error)
+      }
+
+      // Reset conflict state and open join flow for current cause
+      setSameDayConflict({ exists: false })
+      setShowJoinFlow(true)
+
+      Alert.alert(
+        "Registration Canceled",
+        `You've been unregistered from "${sameDayConflict.conflictingCause.name}". You can now join this cause.`,
+      )
+    } catch (error) {
+      console.error("Error canceling conflicting registration:", error)
+      Alert.alert("Error", "Failed to cancel previous registration")
+    } finally {
+      setRegistering(false)
+    }
+  }
+
   const handleSave = async () => {
     try {
       const userId = auth.currentUser?.uid
@@ -923,299 +1046,371 @@ function OpportunityDetailScreen() {
         <View style={styles.headerRight} />
       </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Organization Info */}
-        <View style={styles.organizationSection}>
-          <View style={styles.organizationContainer}>
-            <Image
-              source={
-                contactPerson?.avatar ? { uri: contactPerson.avatar } : require("../../assets/images/placeholder.png")
-              }
-              style={styles.organizationLogo}
-            />
-            <View style={styles.organizationInfo}>
-              <Text style={styles.organizationName}>
-                {contactPerson?.organizationName || opportunity.organizationName}
-              </Text>
-              <Text style={styles.organizationType}>Nonprofit Organization</Text>
-            </View>
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.actionButtonsContainer}>
-            <TouchableOpacity style={styles.actionIconButton} onPress={handleSave}>
-              <Heart size={20} color={isSaved ? "#FF4757" : "#000"} fill={isSaved ? "#FF4757" : "none"} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionIconButton} onPress={handleShare}>
-              <Share2 size={20} color="#000" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Join Button */}
-        <TouchableOpacity
-          style={[
-            styles.joinButton,
-            isRegistered
-              ? styles.cancelButton
-              : isFull && !isRegistered
-                ? styles.disabledButton
-                : new Date(opportunity.date) < new Date()
-                  ? styles.disabledButton
-                  : {},
-          ]}
-          onPress={() => (isRegistered ? handleRegister() : setShowJoinFlow(true))}
-          disabled={
-            registering || (isFull && !isRegistered) || (!isRegistered && new Date(opportunity.date) < new Date())
-          }
-        >
-          {registering ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <Text style={styles.joinButtonText}>
-              {isRegistered
-                ? "Cancel Registration"
-                : isFull && !isRegistered
-                  ? "Event Full"
-                  : new Date(opportunity.date) < new Date()
-                    ? "Event Passed"
-                    : "Join & Sign Up"}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* Date and Time */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Date and Time</Text>
-          <View style={styles.dateTimeContainer}>
-            <Calendar size={20} color="#000" style={styles.sectionIcon} />
-            <View style={styles.dateTimeContent}>
-              <Text style={styles.dateText}>{formatDate(opportunity.date)}</Text>
-              <Text style={styles.timeText}>{opportunity.time}</Text>
-            </View>
-            <TouchableOpacity style={styles.calendarButton} onPress={handleAddToCalendar}>
-              <Text style={styles.calendarButtonText}>Add to Calendar</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* What you'll be doing */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>What you'll be doing</Text>
-          <Text style={styles.descriptionText}>{opportunity.description}</Text>
-        </View>
-
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* Location */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Location</Text>
-          <View style={styles.locationContainer}>
-            <MapPin size={20} color="#000" style={styles.sectionIcon} />
-            <View style={styles.locationContent}>
-              <Text style={styles.locationName}>{opportunity.city}</Text>
-              <Text style={styles.locationAddress}>{opportunity.location?.address}</Text>
-              <Text style={styles.parkingText}>Street Car Parking Available</Text>
-            </View>
-          </View>
-
-          {/* Map View - Adjust size in styles.mapContainer */}
-          {opportunity.location?.coordinates && (
-            <View style={styles.mapContainer}>
-              <MapView
-                style={styles.map}
-                initialRegion={{
-                  latitude: opportunity.location.coordinates.lat,
-                  longitude: opportunity.location.coordinates.lng,
-                  latitudeDelta: 0.01, // Adjust this value to control zoom level
-                  longitudeDelta: 0.01, // Adjust this value to control zoom level
-                }}
-                provider="google"
-                zoomEnabled={true}
-                zoomControlEnabled={true}
-                minZoomLevel={10} // Minimum zoom level
-                maxZoomLevel={20} // Maximum zoom level
-                rotateEnabled={false}
-                scrollEnabled={true} // Enable scrolling/panning
-                pitchEnabled={true} // Enable tilting
-                loadingEnabled={true}
-                loadingIndicatorColor="#15B2BF"
-                loadingBackgroundColor="#f9f9f9"
-              >
-                <Marker
-                  coordinate={{
-                    latitude: opportunity.location.coordinates.lat,
-                    longitude: opportunity.location.coordinates.lng,
-                  }}
-                  title={opportunity.name}
-                  description={opportunity.location.address}
-                />
-              </MapView>
-              <TouchableOpacity style={styles.mapOverlay} onPress={handleOpenMap}>
-                <Text style={styles.viewMapText}>View Map</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* Attendees */}
-        <View style={styles.sectionContainer}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Attendees</Text>
-            {actualParticipantsArray.length > 0 && (
-              <TouchableOpacity onPress={() => setShowAllParticipants(!showAllParticipants)}>
-                <Text style={styles.seeAllText}>
-                  {showAllParticipants ? "Hide" : `See all ${actualParticipantsArray.length}`}
+      <View style={styles.contentContainer}>
+        <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+          {/* Organization Info */}
+          <View style={styles.organizationSection}>
+            <View style={styles.organizationContainer}>
+              <Image
+                source={
+                  contactPerson?.avatar ? { uri: contactPerson.avatar } : require("../../assets/images/placeholder.png")
+                }
+                style={styles.organizationLogo}
+              />
+              <View style={styles.organizationInfo}>
+                <Text style={styles.organizationName}>
+                  {contactPerson?.organizationName || opportunity.organizationName}
                 </Text>
+                <Text style={styles.organizationType}>Nonprofit Organization</Text>
+              </View>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.actionButtonsContainer}>
+              <TouchableOpacity style={styles.actionIconButton} onPress={handleSave}>
+                <Heart size={20} color={isSaved ? "#FF4757" : "#000"} fill={isSaved ? "#FF4757" : "none"} />
               </TouchableOpacity>
+              <TouchableOpacity style={styles.actionIconButton} onPress={handleShare}>
+                <Share2 size={20} color="#000" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Join Button with Conflict Warning */}
+          <View style={styles.joinButtonContainer}>
+            <TouchableOpacity
+              style={[
+                styles.joinButton,
+                isRegistered
+                  ? styles.cancelButton
+                  : sameDayConflict.exists
+                    ? styles.disabledButton
+                    : isFull && !isRegistered
+                      ? styles.disabledButton
+                      : new Date(opportunity.date) < new Date()
+                        ? styles.disabledButton
+                        : {},
+              ]}
+              onPress={() => (isRegistered ? handleRegister() : sameDayConflict.exists ? null : setShowJoinFlow(true))}
+              disabled={
+                registering ||
+                (sameDayConflict.exists && !isRegistered) ||
+                (isFull && !isRegistered) ||
+                (!isRegistered && new Date(opportunity.date) < new Date())
+              }
+            >
+              {registering ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.joinButtonText}>
+                  {isRegistered
+                    ? "Cancel Registration"
+                    : sameDayConflict.exists
+                      ? "Already Registered"
+                      : isFull && !isRegistered
+                        ? "Event Full"
+                        : new Date(opportunity.date) < new Date()
+                          ? "Event Passed"
+                          : "Join & Sign Up"}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Conflict Message and Options */}
+            {sameDayConflict.exists && !isRegistered && (
+              <View style={styles.conflictContainer}>
+                <Text style={styles.conflictMessage}>
+                  You can only participate in one cause per day. You're already registered for "
+                  {sameDayConflict.conflictingCause?.name}" by {sameDayConflict.conflictingCause?.organizationName}.
+                </Text>
+                <View style={styles.conflictOptions}>
+                  <TouchableOpacity
+                    style={styles.conflictOptionButton}
+                    onPress={handleCancelConflictingRegistration}
+                    disabled={registering}
+                  >
+                    <Text style={styles.conflictOptionButtonText}>Cancel previous registration</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.conflictOptionButton, styles.conflictOptionButtonSecondary]}
+                    onPress={() => router.back()}
+                  >
+                    <Text style={styles.conflictOptionButtonText}>Keep current registration</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             )}
           </View>
 
-          {actualParticipantsArray.length > 0 ? (
-            <View style={styles.attendeesContainer}>
-              <View style={styles.avatarsRow}>
-                {actualParticipantsArray
-                  .slice(0, showAllParticipants ? actualParticipantsArray.length : 3)
-                  .map((participant, index) => (
-                    <View key={participant.id || index} style={styles.avatarContainer}>
-                      <Image
-                        source={
-                          participant.avatar
-                            ? { uri: participant.avatar }
-                            : require("../../assets/images/placeholder.png")
-                        }
-                        style={styles.avatar}
-                      />
-                      <Text style={styles.participantName} numberOfLines={1}>
-                        {participant.name}
-                      </Text>
-                    </View>
-                  ))}
+          {/* Divider */}
+          <View style={styles.divider} />
 
-                {!showAllParticipants && actualParticipantsArray.length > 3 && (
-                  <TouchableOpacity style={styles.moreAvatarsButton} onPress={() => setShowAllParticipants(true)}>
-                    <Text style={styles.moreAvatarsText}>+{actualParticipantsArray.length - 3}</Text>
-                  </TouchableOpacity>
-                )}
+          {/* Date and Time */}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>Date and Time</Text>
+            <View style={styles.dateTimeContainer}>
+              <Calendar size={20} color="#000" style={styles.sectionIcon} />
+              <View style={styles.dateTimeContent}>
+                <Text style={styles.dateText}>{formatDate(opportunity.date)}</Text>
+                <Text style={styles.timeText}>{opportunity.time}</Text>
               </View>
-
-              <ParticipantCounter current={registeredCount} max={maxParticipants} />
-            </View>
-          ) : (
-            <View style={styles.noAttendeesContainer}></View>
-          )}
-        </View>
-
-        {/* Divider */}
-        <View style={styles.divider} />
-
-        {/* Schedule */}
-        {scheduleItems.length > 0 && (
-          <>
-            <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Schedule</Text>
-              <View style={styles.scheduleContainer}>
-                {scheduleItems.map((item, index) => (
-                  <View key={index} style={styles.scheduleItem}>
-                    <View style={styles.bulletPoint} />
-                    <Text style={styles.scheduleText}>
-                      {item.time}: {item.activity}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-
-            {/* Divider */}
-            <View style={styles.divider} />
-          </>
-        )}
-
-        {/* Contact */}
-        <View style={styles.sectionContainer}>
-          <Text style={styles.sectionTitle}>Contact</Text>
-          <Text style={styles.contactSubtitle}>Reach out to our event coordinator for additional questions.</Text>
-
-          <View style={styles.contactPersonContainer}>
-            <Image
-              source={
-                contactPerson?.avatar ? { uri: contactPerson.avatar } : require("../../assets/images/placeholder.png")
-              }
-              style={styles.contactAvatar}
-            />
-            <View style={styles.contactInfo}>
-              <Text style={styles.contactName}>
-                {contactPerson ? `${contactPerson.firstName} ${contactPerson.lastName}` : "Event Coordinator"}
-              </Text>
-              <Text style={styles.contactRole}>{contactPerson?.organizationName || opportunity.organizationName}</Text>
-            </View>
-            <View style={styles.contactActions}>
-              <TouchableOpacity style={styles.contactButton} onPress={handleContactEmail}>
-                <Mail size={24} color="#15B2BF" />
+              <TouchableOpacity style={styles.calendarButton} onPress={handleAddToCalendar}>
+                <Text style={styles.calendarButtonText}>Add to Calendar</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
 
-        {/* Divider */}
-        <View style={styles.divider} />
+          {/* Divider */}
+          <View style={styles.divider} />
 
-        {/* Things to know */}
-        {opportunity.disclaimer && (
+          {/* What you'll be doing */}
           <View style={styles.sectionContainer}>
-            <Text style={styles.sectionTitle}>Things to know</Text>
-            <View style={styles.requirementsContainer}>
-              <View style={styles.requirementItem}>
-                <Info size={16} color="#666" style={styles.requirementIcon} />
-                <Text style={styles.requirementText}>{opportunity.disclaimer}</Text>
+            <Text style={styles.sectionTitle}>What you'll be doing</Text>
+            <Text style={styles.descriptionText}>{opportunity.description}</Text>
+          </View>
+
+          {/* Divider */}
+          <View style={styles.divider} />
+
+          {/* Location */}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>Location</Text>
+            <View style={styles.locationContainer}>
+              <MapPin size={20} color="#000" style={styles.sectionIcon} />
+              <View style={styles.locationContent}>
+                <Text style={styles.locationName}>{opportunity.city}</Text>
+                <Text style={styles.locationAddress}>{opportunity.location?.address}</Text>
+                <Text style={styles.parkingText}>Street Car Parking Available</Text>
+              </View>
+            </View>
+
+            {/* Map View - Adjust size in styles.mapContainer */}
+            {opportunity.location?.coordinates && (
+              <View style={styles.mapContainer}>
+                <MapView
+                  style={styles.map}
+                  initialRegion={{
+                    latitude: opportunity.location.coordinates.lat,
+                    longitude: opportunity.location.coordinates.lng,
+                    latitudeDelta: 0.01, // Adjust this value to control zoom level
+                    longitudeDelta: 0.01, // Adjust this value to control zoom level
+                  }}
+                  provider="google"
+                  zoomEnabled={true}
+                  zoomControlEnabled={true}
+                  minZoomLevel={10} // Minimum zoom level
+                  maxZoomLevel={20} // Maximum zoom level
+                  rotateEnabled={false}
+                  scrollEnabled={true} // Enable scrolling/panning
+                  pitchEnabled={true} // Enable tilting
+                  loadingEnabled={true}
+                  loadingIndicatorColor="#15B2BF"
+                  loadingBackgroundColor="#f9f9f9"
+                >
+                  <Marker
+                    coordinate={{
+                      latitude: opportunity.location.coordinates.lat,
+                      longitude: opportunity.location.coordinates.lng,
+                    }}
+                    title={opportunity.name}
+                    description={opportunity.location.address}
+                  />
+                </MapView>
+                <TouchableOpacity style={styles.mapOverlay} onPress={handleOpenMap}>
+                  <Text style={styles.viewMapText}>View Map</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          {/* Divider */}
+          <View style={styles.divider} />
+
+          {/* Attendees */}
+          <View style={styles.sectionContainer}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Attendees</Text>
+              {actualParticipantsArray.length > 0 && (
+                <TouchableOpacity onPress={() => setShowAllParticipants(!showAllParticipants)}>
+                  <Text style={styles.seeAllText}>
+                    {showAllParticipants ? "Hide" : `See all ${actualParticipantsArray.length}`}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {actualParticipantsArray.length > 0 ? (
+              <View style={styles.attendeesContainer}>
+                <View style={styles.avatarsRow}>
+                  {actualParticipantsArray
+                    .slice(0, showAllParticipants ? actualParticipantsArray.length : 3)
+                    .map((participant, index) => (
+                      <View key={participant.id || index} style={styles.avatarContainer}>
+                        <Image
+                          source={
+                            participant.avatar
+                              ? { uri: participant.avatar }
+                              : require("../../assets/images/placeholder.png")
+                          }
+                          style={styles.avatar}
+                        />
+                        <Text style={styles.participantName} numberOfLines={1}>
+                          {participant.name}
+                        </Text>
+                      </View>
+                    ))}
+
+                  {!showAllParticipants && actualParticipantsArray.length > 3 && (
+                    <TouchableOpacity style={styles.moreAvatarsButton} onPress={() => setShowAllParticipants(true)}>
+                      <Text style={styles.moreAvatarsText}>+{actualParticipantsArray.length - 3}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <ParticipantCounter current={registeredCount} max={maxParticipants} />
+              </View>
+            ) : (
+              <View style={styles.noAttendeesContainer}></View>
+            )}
+          </View>
+
+          {/* Divider */}
+          <View style={styles.divider} />
+
+          {/* Schedule */}
+          {scheduleItems.length > 0 && (
+            <>
+              <View style={styles.sectionContainer}>
+                <Text style={styles.sectionTitle}>Schedule</Text>
+                <View style={styles.scheduleContainer}>
+                  {scheduleItems.map((item, index) => (
+                    <View key={index} style={styles.scheduleItem}>
+                      <View style={styles.bulletPoint} />
+                      <Text style={styles.scheduleText}>
+                        {item.time}: {item.activity}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+
+              {/* Divider */}
+              <View style={styles.divider} />
+            </>
+          )}
+
+          {/* Contact */}
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>Contact</Text>
+            <Text style={styles.contactSubtitle}>Reach out to our event coordinator for additional questions.</Text>
+
+            <View style={styles.contactPersonContainer}>
+              <Image
+                source={
+                  contactPerson?.avatar ? { uri: contactPerson.avatar } : require("../../assets/images/placeholder.png")
+                }
+                style={styles.contactAvatar}
+              />
+              <View style={styles.contactInfo}>
+                <Text style={styles.contactName}>
+                  {contactPerson ? `${contactPerson.firstName} ${contactPerson.lastName}` : "Event Coordinator"}
+                </Text>
+                <Text style={styles.contactRole}>
+                  {contactPerson?.organizationName || opportunity.organizationName}
+                </Text>
+              </View>
+              <View style={styles.contactActions}>
+                <TouchableOpacity style={styles.contactButton} onPress={handleContactEmail}>
+                  <Mail size={24} color="#15B2BF" />
+                </TouchableOpacity>
               </View>
             </View>
           </View>
-        )}
 
-        {/* Bottom Join Button (for easy access after scrolling) */}
-        <TouchableOpacity
-          style={[
-            styles.joinButton,
-            styles.bottomJoinButton,
-            isRegistered
-              ? styles.cancelButton
-              : isFull && !isRegistered
-                ? styles.disabledButton
-                : new Date(opportunity.date) < new Date()
-                  ? styles.disabledButton
-                  : {},
-          ]}
-          onPress={() => (isRegistered ? handleRegister() : setShowJoinFlow(true))}
-          disabled={
-            registering || (isFull && !isRegistered) || (!isRegistered && new Date(opportunity.date) < new Date())
-          }
-        >
-          {registering ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <Text style={styles.joinButtonText}>
-              {isRegistered
-                ? "Cancel Registration"
-                : isFull && !isRegistered
-                  ? "Event Full"
-                  : new Date(opportunity.date) < new Date()
-                    ? "Event Passed"
-                    : "Join & Sign Up"}
-            </Text>
+          {/* Divider */}
+          <View style={styles.divider} />
+
+          {/* Things to know */}
+          {opportunity.disclaimer && (
+            <View style={styles.sectionContainer}>
+              <Text style={styles.sectionTitle}>Things to know</Text>
+              <View style={styles.requirementsContainer}>
+                <View style={styles.requirementItem}>
+                  <Info size={16} color="#666" style={styles.requirementIcon} />
+                  <Text style={styles.requirementText}>{opportunity.disclaimer}</Text>
+                </View>
+              </View>
+            </View>
           )}
-        </TouchableOpacity>
-      </ScrollView>
+
+          {/* Bottom Join Button (for easy access after scrolling) */}
+          <View style={styles.joinButtonContainer}>
+            <TouchableOpacity
+              style={[
+                styles.joinButton,
+                styles.bottomJoinButton,
+                isRegistered
+                  ? styles.cancelButton
+                  : sameDayConflict.exists
+                    ? styles.disabledButton
+                    : isFull && !isRegistered
+                      ? styles.disabledButton
+                      : new Date(opportunity.date) < new Date()
+                        ? styles.disabledButton
+                        : {},
+              ]}
+              onPress={() => (isRegistered ? handleRegister() : sameDayConflict.exists ? null : setShowJoinFlow(true))}
+              disabled={
+                registering ||
+                (sameDayConflict.exists && !isRegistered) ||
+                (isFull && !isRegistered) ||
+                (!isRegistered && new Date(opportunity.date) < new Date())
+              }
+            >
+              {registering ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.joinButtonText}>
+                  {isRegistered
+                    ? "Cancel Registration"
+                    : sameDayConflict.exists
+                      ? "Already Registered"
+                      : isFull && !isRegistered
+                        ? "Event Full"
+                        : new Date(opportunity.date) < new Date()
+                          ? "Event Passed"
+                          : "Join & Sign Up"}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            {/* Conflict Message and Options (bottom) */}
+            {sameDayConflict.exists && !isRegistered && (
+              <View style={styles.conflictContainer}>
+                <Text style={styles.conflictMessage}>
+                  You can only participate in one cause per day. You're already registered for "
+                  {sameDayConflict.conflictingCause?.name}" by {sameDayConflict.conflictingCause?.organizationName}.
+                </Text>
+                <View style={styles.conflictOptions}>
+                  <TouchableOpacity
+                    style={styles.conflictOptionButton}
+                    onPress={handleCancelConflictingRegistration}
+                    disabled={registering}
+                  >
+                    <Text style={styles.conflictOptionButtonText}>Cancel previous registration</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.conflictOptionButton, styles.conflictOptionButtonSecondary]}
+                    onPress={() => router.back()}
+                  >
+                    <Text style={styles.conflictOptionButtonText}>Keep current registration</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+        </ScrollView>
+      </View>
       <JoinCauseFlow
         isVisible={showJoinFlow}
         onClose={() => {
@@ -1319,7 +1514,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginHorizontal: 20,
     marginBottom: 20,
-    width: 142, // Default width for Join button
+    width: 180, // Increased from 142 to 180 for "Already Registered"
     alignSelf: "center", // Center the button
     // Add shadow properties
     shadowColor: "#000",
@@ -1624,6 +1819,50 @@ const styles = StyleSheet.create({
   currentCount: {
     fontWeight: "bold",
     color: "#15B2BF",
+  },
+  contentContainer: {
+    flex: 1,
+  },
+  joinButtonContainer: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    alignItems: "center",
+  },
+  conflictContainer: {
+    marginTop: 10,
+    padding: 15,
+    backgroundColor: "#FFF9C4", // Light yellow background
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FFC107",
+    width: "100%",
+  },
+  conflictMessage: {
+    fontSize: 14,
+    color: "#5D4037",
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  conflictOptions: {
+    flexDirection: "column",
+    justifyContent: "center",
+    width: "100%",
+  },
+  conflictOptionButton: {
+    backgroundColor: "#FF4757",
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    marginVertical: 5,
+    alignItems: "center",
+  },
+  conflictOptionButtonSecondary: {
+    backgroundColor: "#757575",
+  },
+  conflictOptionButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "500",
+    fontSize: 14,
   },
 })
 

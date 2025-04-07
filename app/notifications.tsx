@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useContext } from "react"
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { auth, db } from "./firebase/config"
 import { useFonts } from "expo-font"
 import BottomNavigation from "../components/bottom-navigation"
 import { Linking } from "react-native"
+import { NotificationContext } from "./_layout"
 
 interface Notification {
   id: string
@@ -48,6 +49,9 @@ export default function NotificationsScreen() {
     "AbhayaLibre-ExtraBold": require("../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
   })
 
+  // Add this near the top of the component, after other hooks
+  const { refreshUnreadCount } = useContext(NotificationContext)
+
   // Set up real-time listener for notifications
   useEffect(() => {
     const userId = auth.currentUser?.uid
@@ -58,86 +62,104 @@ export default function NotificationsScreen() {
 
     setLoading(true)
 
-    // Set up listener for regular notifications
-    const notificationsRef = collection(db, "notifications")
-    const notificationsQuery = query(notificationsRef, where("userId", "==", userId), orderBy("timestamp", "desc"))
+    let unsubscribeNotifications = () => {}
+    let unsubscribeRemovals = () => {}
 
-    const unsubscribeNotifications = onSnapshot(
-      notificationsQuery,
-      (snapshot) => {
-        const notificationsList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-          read: doc.data().read || false,
-        })) as Notification[]
+    try {
+      // Set up listener for regular notifications
+      const notificationsRef = collection(db, "notifications")
+      const notificationsQuery = query(notificationsRef, where("userId", "==", userId), orderBy("timestamp", "desc"))
 
-        // Update notifications state
-        updateNotifications(notificationsList, [])
-      },
-      (error) => {
-        console.error("Error listening to notifications:", error)
-      },
-    )
+      unsubscribeNotifications = onSnapshot(
+        notificationsQuery,
+        (snapshot) => {
+          const notificationsList = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+            read: doc.data().read || false,
+          })) as Notification[]
 
-    // Set up listener for removal notifications
-    const removalsRef = collection(db, "participantRemovals")
-    const removalsQuery = query(removalsRef, where("userId", "==", userId))
+          // Update notifications state
+          updateNotifications(notificationsList, [])
+        },
+        (error) => {
+          // Only log error if user is still logged in
+          if (auth.currentUser) {
+            console.error("Error listening to notifications:", error)
+          }
+        },
+      )
 
-    const unsubscribeRemovals = onSnapshot(
-      removalsQuery,
-      async (snapshot) => {
-        const removalsList = await Promise.all(
-          snapshot.docs.map(async (docSnapshot) => {
-            const data = docSnapshot.data()
+      // Set up listener for removal notifications
+      const removalsRef = collection(db, "participantRemovals")
+      const removalsQuery = query(removalsRef, where("userId", "==", userId))
 
-            // Fetch admin details if available
-            let adminEmail = undefined
-            let organizationName = undefined
+      unsubscribeRemovals = onSnapshot(
+        removalsQuery,
+        async (snapshot) => {
+          const removalsList = await Promise.all(
+            snapshot.docs.map(async (docSnapshot) => {
+              const data = docSnapshot.data()
 
-            if (data.adminId) {
-              try {
-                const adminDocRef = doc(db, "admins", data.adminId)
-                const adminDocSnapshot = await getDoc(adminDocRef)
-                if (adminDocSnapshot.exists()) {
-                  const adminData = adminDocSnapshot.data()
-                  adminEmail = adminData.workEmail || adminData.email
-                  organizationName = adminData.organizationName
+              // Fetch admin details if available
+              let adminEmail = undefined
+              let organizationName = undefined
+
+              if (data.adminId) {
+                try {
+                  const adminDocRef = doc(db, "admins", data.adminId)
+                  const adminDocSnapshot = await getDoc(adminDocRef)
+                  if (adminDocSnapshot.exists()) {
+                    const adminData = adminDocSnapshot.data()
+                    adminEmail = adminData.workEmail || adminData.email
+                    organizationName = adminData.organizationName
+                  }
+                } catch (error) {
+                  console.error("Error fetching admin details:", error)
                 }
-              } catch (error) {
-                console.error("Error fetching admin details:", error)
               }
-            }
 
-            return {
-              id: docSnapshot.id,
-              type: "removal",
-              title: "Removed from Cause",
-              message: `You have been removed from "${data.causeName}" due to: ${data.reason}`,
-              timestamp: data.timestamp,
-              read: data.seen || false,
-              causeName: data.causeName,
-              causeId: data.causeId,
-              reason: data.reason,
-              adminId: data.adminId,
-              adminEmail: adminEmail,
-              organizationName: organizationName,
-            } as Notification
-          }),
-        )
+              return {
+                id: docSnapshot.id,
+                type: "removal",
+                title: "Removed from Cause",
+                message: `You have been removed from "${data.causeName}" due to: ${data.reason}`,
+                timestamp: data.timestamp,
+                read: data.seen || false,
+                causeName: data.causeName,
+                causeId: data.causeId,
+                reason: data.reason,
+                adminId: data.adminId,
+                adminEmail: adminEmail,
+                organizationName: organizationName,
+              } as Notification
+            }),
+          )
 
-        // Update notifications state
-        updateNotifications([], removalsList)
-      },
-      (error) => {
-        console.error("Error listening to removals:", error)
-      },
-    )
+          // Update notifications state
+          updateNotifications([], removalsList)
+        },
+        (error) => {
+          // Only log error if user is still logged in
+          if (auth.currentUser) {
+            console.error("Error listening to removals:", error)
+          }
+        },
+      )
+    } catch (error) {
+      console.error("Error setting up notification listeners:", error)
+      setLoading(false)
+    }
 
     return () => {
-      unsubscribeNotifications()
-      unsubscribeRemovals()
+      try {
+        unsubscribeNotifications()
+        unsubscribeRemovals()
+      } catch (error) {
+        // Ignore cleanup errors
+      }
     }
-  }, [router])
+  }, [router, refreshUnreadCount])
 
   // Function to update notifications state
   const updateNotifications = (regularNotifications: Notification[], removalNotifications: Notification[]) => {
@@ -274,19 +296,30 @@ export default function NotificationsScreen() {
     fetchNotifications()
   }, [])
 
+  // Update the markAsRead function to handle permission errors gracefully
   const markAsRead = async (notificationId: string, type: string) => {
     try {
       if (type === "removal") {
-        await updateDoc(doc(db, "participantRemovals", notificationId), {
-          seen: true,
-        })
+        try {
+          await updateDoc(doc(db, "participantRemovals", notificationId), {
+            seen: true,
+          })
+        } catch (error) {
+          console.log("Could not update removal notification in Firestore, updating locally only")
+          // If Firestore update fails, just update the local state
+        }
       } else {
-        await updateDoc(doc(db, "notifications", notificationId), {
-          read: true,
-        })
+        try {
+          await updateDoc(doc(db, "notifications", notificationId), {
+            read: true,
+          })
+        } catch (error) {
+          console.log("Could not update notification in Firestore, updating locally only")
+          // If Firestore update fails, just update the local state
+        }
       }
 
-      // Update local state
+      // Always update local state regardless of Firestore success
       setNotifications((prev) =>
         prev.map((notification) =>
           notification.id === notificationId ? { ...notification, read: true } : notification,
@@ -305,18 +338,22 @@ export default function NotificationsScreen() {
 
         return newGrouped
       })
+
+      // Refresh the global unread count
+      refreshUnreadCount()
     } catch (error) {
       console.error("Error marking notification as read:", error)
     }
   }
 
+  // Modified to handle different notification types differently
   const handleNotificationPress = (notification: Notification) => {
-    // Mark as read
+    // Mark as read for all notification types
     markAsRead(notification.id, notification.type)
 
     // Handle different notification types
     if (notification.type === "removal") {
-      // Show removal details
+      // For removal notifications, show an alert with details
       Alert.alert(
         "Removal Details",
         `You were removed from "${notification.causeName}" due to: ${notification.reason}`,
@@ -334,20 +371,9 @@ export default function NotificationsScreen() {
           },
         ],
       )
-    } else if (notification.type === "signup") {
-      // Navigate to the cause details
-      if (notification.causeId) {
-        router.push(`/opportunity/${notification.causeId}` as any)
-      }
-    } else if (notification.type === "new_cause") {
-      // Navigate to the cause details
-      if (notification.causeId) {
-        router.push(`/opportunity/${notification.causeId}` as any)
-      }
-    } else if (notification.causeId) {
-      // Default: navigate to the cause if causeId exists
-      router.push(`/opportunity/${notification.causeId}` as any)
     }
+    // For all other notification types, just mark as read without navigation
+    // We removed the navigation logic for other notification types
   }
 
   const handleContactOrganizer = (notification: Notification) => {
@@ -491,7 +517,7 @@ export default function NotificationsScreen() {
       )}
 
       {/* Bottom Navigation with Badge */}
-      <BottomNavigation activeTab="notifications" notificationCount={unreadCount} />
+      <BottomNavigation activeTab="notifications" />
     </SafeAreaView>
   )
 }

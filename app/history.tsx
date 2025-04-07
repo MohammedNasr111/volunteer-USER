@@ -12,6 +12,7 @@ import {
   Modal,
   ScrollView,
   Alert,
+  FlatList,
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
@@ -948,78 +949,90 @@ export default function HistoryScreen() {
           <ActivityIndicator size="large" color="#15B2BF" />
         </View>
       ) : (
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.opportunitiesList}>
-          {activeTab === "past" &&
-            (pastOpportunities.length > 0 ? (
-              pastOpportunities
-                .filter(
-                  (opp) =>
-                    searchQuery === "" ||
-                    opp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    opp.organizationName.toLowerCase().includes(searchQuery.toLowerCase()),
-                )
-                .map((opportunity) => (
-                  <View key={opportunity.id} style={styles.opportunityContainer}>
-                    {renderPastOpportunityCard(opportunity)}
-                  </View>
-                ))
-            ) : (
-              <View style={styles.emptyContainer}>
-                <Image source={require("../assets/images/placeholder.png")} style={styles.emptyImage} />
-                <Text style={styles.emptyTitle}>No Past Causes</Text>
-                <Text style={styles.emptyText}>You haven't participated in any volunteer opportunities yet.</Text>
-              </View>
-            ))}
+        <View style={styles.contentContainer}>
+          {activeTab === "past" && (
+            <>
+              {pastOpportunities.length > 0 ? (
+                <FlatList
+                  data={pastOpportunities.filter(
+                    (opp) =>
+                      searchQuery === "" ||
+                      opp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      opp.organizationName.toLowerCase().includes(searchQuery.toLowerCase()),
+                  )}
+                  renderItem={({ item }) => (
+                    <View style={styles.opportunityContainer}>{renderPastOpportunityCard(item)}</View>
+                  )}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.opportunitiesList}
+                />
+              ) : (
+                <View style={styles.emptyContainer}>
+                  <Image source={require("../assets/images/placeholder.png")} style={styles.emptyImage} />
+                  <Text style={styles.emptyTitle}>No Past Causes</Text>
+                  <Text style={styles.emptyText}>You haven't participated in any volunteer opportunities yet.</Text>
+                </View>
+              )}
+            </>
+          )}
 
-          {activeTab === "upcoming" &&
-            (upcomingOpportunities.length > 0 ? (
-              upcomingOpportunities
-                .filter(
-                  (opp) =>
-                    searchQuery === "" ||
-                    opp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    opp.organizationName.toLowerCase().includes(searchQuery.toLowerCase()),
-                )
-                .map((opportunity) => (
-                  <View key={opportunity.id} style={styles.opportunityContainer}>
-                    {renderUpcomingOpportunityCard(opportunity)}
-                  </View>
-                ))
-            ) : (
-              <View style={styles.emptyContainer}>
-                <Image source={require("../assets/images/placeholder.png")} style={styles.emptyImage} />
-                <Text style={styles.emptyTitle}>No Upcoming Causes</Text>
-                <Text style={styles.emptyText}>You haven't signed up for any upcoming volunteer opportunities.</Text>
-              </View>
-            ))}
+          {activeTab === "upcoming" && (
+            <>
+              {upcomingOpportunities.length > 0 ? (
+                <FlatList
+                  data={upcomingOpportunities.filter(
+                    (opp) =>
+                      searchQuery === "" ||
+                      opp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      opp.organizationName.toLowerCase().includes(searchQuery.toLowerCase()),
+                  )}
+                  renderItem={({ item }) => (
+                    <View style={styles.opportunityContainer}>{renderUpcomingOpportunityCard(item)}</View>
+                  )}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.opportunitiesList}
+                />
+              ) : (
+                <View style={styles.emptyContainer}>
+                  <Image source={require("../assets/images/placeholder.png")} style={styles.emptyImage} />
+                  <Text style={styles.emptyTitle}>No Upcoming Causes</Text>
+                  <Text style={styles.emptyText}>You haven't signed up for any upcoming volunteer opportunities.</Text>
+                </View>
+              )}
+            </>
+          )}
 
-          {activeTab === "saved" &&
-            (savedOpportunities.length > 0 ? (
-              savedOpportunities
-                .filter(
-                  (opp) =>
-                    searchQuery === "" ||
-                    opp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    opp.organizationName.toLowerCase().includes(searchQuery.toLowerCase()),
-                )
-                .map((opportunity) => (
-                  <View key={opportunity.id} style={styles.opportunityContainer}>
-                    {renderSavedOpportunityCard(opportunity)}
-                  </View>
-                ))
-            ) : (
-              <View style={styles.emptyContainer}>
-                <Image source={require("../assets/images/placeholder.png")} style={styles.emptyImage} />
-                <Text style={styles.emptyTitle}>No Saved Causes</Text>
-                <Text style={styles.emptyText}>You haven't saved any volunteer opportunities yet.</Text>
-              </View>
-            ))}
+          {activeTab === "saved" && (
+            <>
+              {savedOpportunities.length > 0 ? (
+                <FlatList
+                  data={savedOpportunities.filter(
+                    (opp) =>
+                      searchQuery === "" ||
+                      opp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      opp.organizationName.toLowerCase().includes(searchQuery.toLowerCase()),
+                  )}
+                  renderItem={({ item }) => (
+                    <View style={styles.opportunityContainer}>{renderSavedOpportunityCard(item)}</View>
+                  )}
+                  keyExtractor={(item) => item.id}
+                  contentContainerStyle={styles.opportunitiesList}
+                />
+              ) : (
+                <View style={styles.emptyContainer}>
+                  <Image source={require("../assets/images/placeholder.png")} style={styles.emptyImage} />
+                  <Text style={styles.emptyTitle}>No Saved Causes</Text>
+                  <Text style={styles.emptyText}>You haven't saved any volunteer opportunities yet.</Text>
+                </View>
+              )}
+            </>
+          )}
 
           {/* Find More Causes Button */}
           <TouchableOpacity style={styles.findMoreButton} onPress={handleFindMoreCauses}>
             <Text style={styles.findMoreButtonText}>Find More Causes</Text>
           </TouchableOpacity>
-        </ScrollView>
+        </View>
       )}
 
       {/* Feedback Modal */}
@@ -1604,6 +1617,10 @@ const styles = StyleSheet.create({
   participantRating: {
     flexDirection: "row",
     marginTop: 4,
+  },
+  contentContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
   },
 })
 

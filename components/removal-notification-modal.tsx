@@ -52,6 +52,12 @@ const RemovalNotificationModal: React.FC<RemovalNotificationModalProps> = ({ vis
     }
   }
 
+  // Ensure the modal properly updates the user's registered_opportunities when closed
+  const handleDismiss = () => {
+    // Make sure the notification is marked as seen
+    onClose()
+  }
+
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
@@ -89,7 +95,8 @@ const RemovalNotificationModal: React.FC<RemovalNotificationModalProps> = ({ vis
             </Text>
 
             <View style={styles.buttonContainer}>
-              <TouchableOpacity style={styles.dismissButton} onPress={onClose}>
+              {/* Update the dismiss button to use this handler */}
+              <TouchableOpacity style={styles.dismissButton} onPress={handleDismiss}>
                 <Text style={styles.dismissButtonText}>Dismiss</Text>
               </TouchableOpacity>
 

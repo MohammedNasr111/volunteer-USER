@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react"
 import { collection, query, where, onSnapshot, getDocs, doc, getDoc, updateDoc, arrayRemove } from "firebase/firestore"
 import { auth, db } from "../app/firebase/config"
+import { ref, set, runTransaction } from "firebase/database"
+import { realtimeDb } from "../app/firebase/config"
 
 interface RemovalData {
   id: string
@@ -83,9 +85,22 @@ export function useParticipantRemoval() {
         // Update user's registered_opportunities to remove this cause
         if (data.causeId) {
           try {
+            // First, update Firestore to remove the cause from registered_opportunities
             await updateDoc(doc(db, "users", userId), {
               registered_opportunities: arrayRemove(data.causeId),
             })
+
+            // Also ensure the user is removed from the participants list in Realtime Database
+            const participantRef = ref(realtimeDb, `causes/${data.causeId}/participants/${userId}`)
+            await set(participantRef, null)
+
+            // Update the participants count in Realtime Database
+            const participantsCountRef = ref(realtimeDb, `causes/${data.causeId}/participantsCount`)
+            await runTransaction(participantsCountRef, (currentCount) => {
+              return Math.max(0, (currentCount || 0) - 1)
+            })
+
+            console.log(`User ${userId} removed from cause ${data.causeId} successfully`)
           } catch (error) {
             console.error("Error updating user's registered opportunities:", error)
           }
@@ -147,9 +162,22 @@ export function useParticipantRemoval() {
                 // Update user's registered_opportunities to remove this cause
                 if (data.causeId) {
                   try {
+                    // First, update Firestore to remove the cause from registered_opportunities
                     await updateDoc(doc(db, "users", userId), {
                       registered_opportunities: arrayRemove(data.causeId),
                     })
+
+                    // Also remove the user from the participants list in Realtime Database
+                    const participantRef = ref(realtimeDb, `causes/${data.causeId}/participants/${userId}`)
+                    await set(participantRef, null)
+
+                    // Update the participants count in Realtime Database
+                    const participantsCountRef = ref(realtimeDb, `causes/${data.causeId}/participantsCount`)
+                    await runTransaction(participantsCountRef, (currentCount) => {
+                      return Math.max(0, (currentCount || 0) - 1)
+                    })
+
+                    console.log(`User ${userId} removed from cause ${data.causeId} successfully`)
                   } catch (error) {
                     console.error("Error updating user's registered opportunities:", error)
                   }
@@ -168,7 +196,7 @@ export function useParticipantRemoval() {
     )
 
     return () => unsubscribe()
-  }, [auth.currentUser?.uid, checkForRemovalNotifications, fetchAdminDetails])
+  }, [auth.currentUser?.uid, checkForRemovalNotifications])
 
   // Function to mark notification as seen
   const markAsSeen = async () => {

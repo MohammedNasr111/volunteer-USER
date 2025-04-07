@@ -15,25 +15,29 @@ import {
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { Edit2, LogOut, ArrowLeft, Info, X } from "lucide-react-native"
+import { Edit2, LogOut, ArrowLeft, Info, X, Calendar, Clock } from "lucide-react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { doc, getDoc, updateDoc } from "firebase/firestore"
 import { auth, db, storage } from "./firebase/config"
 import { signOut } from "firebase/auth"
 import { useFonts } from "expo-font"
 import BottomNavigation from "../components/bottom-navigation"
-import OpportunityCard, { type Opportunity } from "../components/opportunity-card"
+import type { Opportunity } from "../components/opportunity-card"
 import * as ImagePicker from "expo-image-picker"
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
 import { useFocusEffect } from "@react-navigation/native"
+import { getDatabase, ref as realtimeRef, onValue } from "firebase/database"
 
-// Get screen width for calculating card width
+// Get screen width
 const screenWidth = Dimensions.get("window").width
 
 // Add a global update function at the top of the file, after imports
 declare global {
   var updateProfileData: ((data: any) => void) | null
 }
+
+// Initialize Firebase Realtime Database
+const realtimeDb = getDatabase()
 
 // Update the rank system to change the Platinum color to a gradient
 const rankSystem = [
@@ -52,6 +56,196 @@ const tabs = [
   { id: "past", label: "Past" },
   { id: "saved", label: "Saved" },
 ]
+
+// Define the props interface for CompactOpportunityCard
+interface CompactOpportunityCardProps {
+  opportunity: Opportunity
+  onPress: (opportunityId: string) => void
+}
+
+// Create a compact version of the OpportunityCard for the grid layout
+const CompactOpportunityCard = ({ opportunity, onPress }: CompactOpportunityCardProps) => {
+  const [orgName, setOrgName] = useState(opportunity.organizationName || "")
+  const [orgLogo, setOrgLogo] = useState(opportunity.organizationLogo || "")
+  const [registeredCount, setRegisteredCount] = useState(opportunity.registeredCount || 0)
+
+  useEffect(() => {
+    // Fetch organization data if needed
+    if (opportunity.createdBy && typeof opportunity.createdBy === "string" && (!orgName || !orgLogo)) {
+      const fetchOrgData = async () => {
+        try {
+          const orgDoc = await getDoc(doc(db, "admins", opportunity.createdBy as string))
+          if (orgDoc.exists()) {
+            const orgData = orgDoc.data()
+            if (orgData.organizationName) {
+              setOrgName(orgData.organizationName)
+            }
+            if (orgData.photoURL) {
+              setOrgLogo(orgData.photoURL)
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching organization data:", error)
+        }
+      }
+      fetchOrgData()
+    }
+  }, [opportunity.createdBy, orgName, orgLogo])
+
+  useEffect(() => {
+    // Fetch real-time participant count from Firebase Realtime Database
+    if (opportunity.id) {
+      const participantsCountRef = realtimeRef(realtimeDb, `causes/${opportunity.id}/participantsCount`)
+
+      // Set up a listener for real-time updates
+      const unsubscribe = onValue(participantsCountRef, (snapshot) => {
+        const count = snapshot.val() || 0
+        setRegisteredCount(count)
+      })
+
+      // Clean up the listener when the component unmounts
+      return () => unsubscribe()
+    }
+  }, [opportunity.id])
+
+  // Format date for display (e.g., "Tue, 8 Apr • 08:00")
+  const formatDateAndTime = (dateString?: string, timeString?: string) => {
+    if (!dateString) return ""
+    try {
+      const date = new Date(dateString)
+
+      // Format day and date (e.g., "Tue, 8 Apr")
+      const day = date.toLocaleDateString("en-US", { weekday: "short" })
+      const dayNum = date.getDate()
+      const month = date.toLocaleDateString("en-US", { month: "short" })
+
+      // Extract start time from timeString if available
+      let startTime = ""
+      if (timeString) {
+        const timeParts = timeString.split(" - ")
+        if (timeParts.length > 0) {
+          startTime = timeParts[0].trim()
+        }
+      }
+
+      return `${day}, ${dayNum} ${month} • ${startTime}`
+    } catch (e) {
+      console.error("Error formatting date:", e)
+      return dateString
+    }
+  }
+
+  // Calculate duration from time string
+  const calculateDuration = (timeString?: string) => {
+    if (!timeString || !timeString.includes("-")) return "4 hrs"
+
+    try {
+      const [startTimeStr, endTimeStr] = timeString.split("-").map((t) => t.trim())
+
+      // Parse start time
+      let startHour = 0
+      let startMinute = 0
+      const startMatch = startTimeStr.match(/(\d+):(\d+)(?:\s*(AM|PM))?/i)
+
+      if (startMatch) {
+        startHour = Number.parseInt(startMatch[1], 10)
+        startMinute = Number.parseInt(startMatch[2], 10)
+
+        // Handle AM/PM for start time
+        const startPeriod = startMatch[3]?.toUpperCase()
+        if (startPeriod === "PM" && startHour < 12) startHour += 12
+        if (startPeriod === "AM" && startHour === 12) startHour = 0
+      }
+
+      // Parse end time
+      let endHour = 0
+      let endMinute = 0
+      const endMatch = endTimeStr.match(/(\d+):(\d+)(?:\s*(AM|PM))?/i)
+
+      if (endMatch) {
+        endHour = Number.parseInt(endMatch[1], 10)
+        endMinute = Number.parseInt(endMatch[2], 10)
+
+        // Handle AM/PM for end time
+        const endPeriod = endMatch[3]?.toUpperCase()
+        if (endPeriod === "PM" && endHour < 12) endHour += 12
+        if (endPeriod === "AM" && endHour === 12) endHour = 0
+      }
+
+      // Calculate duration in hours
+      const startMinutes = startHour * 60 + startMinute
+      const endMinutes = endHour * 60 + endMinute
+
+      // Handle case where end time is on the next day
+      const durationMinutes =
+        endMinutes >= startMinutes ? endMinutes - startMinutes : 24 * 60 - startMinutes + endMinutes
+
+      const durationHours = durationMinutes / 60
+
+      // Format the duration
+      return durationHours % 1 === 0 ? `${durationHours} hrs` : `${durationHours.toFixed(1)} hrs`
+    } catch (error) {
+      console.error("Error calculating duration:", error)
+      return "4 hrs" // Fallback
+    }
+  }
+
+  // Get the display name and logo for the organization
+  const displayOrgName = orgName || opportunity.organizationName || "Unknown Organization"
+  const displayOrgLogo = orgLogo || opportunity.organizationLogo
+
+  // Calculate the volunteers count
+  const maxVolunteers = Number.parseInt(opportunity.volunteers || "0", 10)
+  const volunteersText = `${registeredCount}/${maxVolunteers} joined`
+
+  // Get the duration
+  const duration = calculateDuration(opportunity.time)
+
+  return (
+    <TouchableOpacity style={styles.compactCard} onPress={() => onPress(opportunity.id)} activeOpacity={0.7}>
+      <View style={styles.compactImageContainer}>
+        <Image
+          source={opportunity.imageUrl ? { uri: opportunity.imageUrl } : require("../assets/images/placeholder.png")}
+          style={styles.compactImage}
+        />
+
+        {/* Date Badge with Calendar Icon */}
+        <View style={styles.compactDateBadge}>
+          <Calendar size={12} color="#000" style={styles.compactCalendarIcon} />
+          <Text style={styles.compactDateText}>{formatDateAndTime(opportunity.date, opportunity.time)}</Text>
+        </View>
+
+        {/* Duration Badge with Clock Icon */}
+        <View style={styles.compactDurationBadge}>
+          <Clock size={12} color="#000" style={styles.compactClockIcon} />
+          <Text style={styles.compactDurationText}>{duration}</Text>
+        </View>
+      </View>
+
+      <View style={styles.compactContent}>
+        <Text style={styles.compactTitle} numberOfLines={2}>
+          {opportunity.name}
+        </Text>
+
+        {/* Organization */}
+        <View style={styles.compactOrgRow}>
+          {displayOrgLogo ? (
+            <Image source={{ uri: displayOrgLogo }} style={styles.compactOrgLogo} />
+          ) : (
+            <View style={styles.compactOrgLogoPlaceholder} />
+          )}
+          <Text style={styles.compactOrgName} numberOfLines={1}>
+            {displayOrgName}
+          </Text>
+        </View>
+
+        <View style={styles.joinedCountContainer}>
+          <Text style={styles.joinedCountText}>{volunteersText}</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  )
+}
 
 export default function ProfileScreen() {
   const router = useRouter()
@@ -116,6 +310,14 @@ export default function ProfileScreen() {
 
             const results = await Promise.all(opportunitiesPromises)
             opportunitiesList = results.filter(Boolean) as Opportunity[]
+
+            // Sort by date (oldest first)
+            opportunitiesList.sort((a, b) => {
+              // Handle potential undefined dates with fallback to empty string
+              const dateA = a.date ? new Date(a.date).getTime() : 0
+              const dateB = b.date ? new Date(b.date).getTime() : 0
+              return dateA - dateB // Sort in ascending order (oldest first)
+            })
           }
         }
       } else if (tabType === "saved") {
@@ -151,6 +353,14 @@ export default function ProfileScreen() {
 
             const results = await Promise.all(opportunitiesPromises)
             opportunitiesList = results.filter(Boolean) as Opportunity[]
+
+            // Sort by date (oldest first)
+            opportunitiesList.sort((a, b) => {
+              // Handle potential undefined dates with fallback to empty string
+              const dateA = a.date ? new Date(a.date).getTime() : 0
+              const dateB = b.date ? new Date(b.date).getTime() : 0
+              return dateA - dateB // Sort in ascending order (oldest first)
+            })
           }
         }
       }
@@ -201,7 +411,7 @@ export default function ProfileScreen() {
     try {
       const userId = auth.currentUser?.uid
       if (!userId) {
-        router.replace("/login")
+        router.replace("/splash")
         return
       }
 
@@ -224,7 +434,7 @@ export default function ProfileScreen() {
         fetchOpportunities(userId, activeTab)
       } else {
         console.error("User document not found")
-        router.replace("/login")
+        router.replace("/splash")
       }
     } catch (error) {
       console.error("Error fetching user data:", error)
@@ -264,10 +474,16 @@ export default function ProfileScreen() {
 
   const handleSignOut = async () => {
     try {
-      await signOut(auth)
+      // First navigate to splash screen, then sign out
       router.replace("/splash")
+      // Add a small delay before signing out to ensure navigation completes
+      setTimeout(() => {
+        signOut(auth).catch((error) => {
+          console.error("Error signing out:", error)
+        })
+      }, 100)
     } catch (error) {
-      console.error("Error signing out:", error)
+      console.error("Error during sign out process:", error)
     }
   }
 
@@ -351,15 +567,6 @@ export default function ProfileScreen() {
 
   const toggleRankInfo = () => {
     setShowRankInfo(!showRankInfo)
-  }
-
-  // Function to render each opportunity item in the grid
-  const renderOpportunityItem = ({ item, index }: { item: Opportunity; index: number }) => {
-    return (
-      <View style={styles.gridItem}>
-        <OpportunityCard opportunity={item} onPress={() => handleOpportunityPress(item.id)} />
-      </View>
-    )
   }
 
   if (!fontsLoaded || loading) {
@@ -473,15 +680,15 @@ export default function ProfileScreen() {
           <Text style={styles.emptyText}>No {activeTab} causes found</Text>
         </View>
       ) : (
-        <View style={styles.opportunitiesContainer}>
+        <View style={styles.contentContainer}>
           <FlatList
             key={`opportunities-${activeTab}`} // Add a key that changes when the tab changes
             data={opportunities}
-            renderItem={renderOpportunityItem}
+            renderItem={({ item }) => <CompactOpportunityCard opportunity={item} onPress={handleOpportunityPress} />}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.opportunitiesContent}
-            numColumns={2} // Set to 2 columns for grid layout
-            columnWrapperStyle={styles.columnWrapper} // Style for the row wrapper
+            numColumns={2} // Change to 2 columns
+            columnWrapperStyle={styles.columnWrapper} // Add style for columns
           />
         </View>
       )}
@@ -757,13 +964,10 @@ const styles = StyleSheet.create({
     paddingBottom: 80, // Add padding at the bottom for the navigation bar
     paddingHorizontal: 15, // Add horizontal padding
   },
-  columnWrapper: {
-    justifyContent: "space-between", // Space evenly between items
-    paddingHorizontal: 5, // Add some padding
-  },
-  gridItem: {
-    width: "48%", // Each card takes up 48% of the width
-    marginBottom: 15, // Add margin between rows
+  cardContainer: {
+    width: "100%", // Each card takes full width
+    marginBottom: 15,
+    alignSelf: "center",
   },
   emptyContainer: {
     flex: 1,
@@ -886,6 +1090,137 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     marginTop: 15,
     textAlign: "center",
+  },
+  contentContainer: {
+    flex: 1,
+  },
+  // New styles for the grid layout
+  columnWrapper: {
+    justifyContent: "space-between",
+    paddingHorizontal: 10,
+  },
+  compactCard: {
+    width: (screenWidth - 50) / 2, // Calculate width for 2 columns with spacing
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: "#f0f0f0",
+    marginBottom: 15,
+  },
+  compactImageContainer: {
+    position: "relative",
+    width: "100%",
+    height: 120,
+  },
+  compactImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  compactDateBadge: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
+    elevation: 2,
+  },
+  compactDateText: {
+    color: "#000",
+    fontSize: 10,
+    fontWeight: "500",
+  },
+  compactDurationBadge: {
+    position: "absolute",
+    bottom: 8,
+    right: 8,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
+    elevation: 2,
+  },
+  compactDurationText: {
+    color: "#000",
+    fontSize: 10,
+    fontWeight: "500",
+  },
+  compactContent: {
+    padding: 10,
+  },
+  compactTitle: {
+    fontFamily: "AbhayaLibre-ExtraBold",
+    fontSize: 14,
+    marginBottom: 6,
+    height: 36, // Fixed height for 2 lines
+  },
+  compactOrgRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  compactOrgLogo: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    marginRight: 4,
+  },
+  compactOrgLogoPlaceholder: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#f0f0f0",
+    marginRight: 4,
+  },
+  compactOrgName: {
+    fontSize: 11,
+    color: "#666",
+    flex: 1,
+  },
+  compactVolunteers: {
+    fontSize: 11,
+    color: "#15B2BF",
+    fontWeight: "500",
+    marginTop: 4, // Add some spacing above the count
+  },
+  joinedCountContainer: {
+    marginTop: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    backgroundColor: "#f5f5f5",
+    borderRadius: 10,
+    alignSelf: "flex-start",
+  },
+  joinedCountText: {
+    fontSize: 11,
+    color: "#15B2BF",
+    fontWeight: "bold",
+  },
+  compactCalendarIcon: {
+    marginRight: 4,
+  },
+  compactClockIcon: {
+    marginRight: 4,
   },
 })
 

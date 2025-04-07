@@ -2,14 +2,18 @@
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
 import { useRouter } from "expo-router"
 import { Home, Clock, Bell, User } from "lucide-react-native"
+import { useContext } from "react"
+import { NotificationContext } from "../app/_layout"
 
 type BottomNavigationProps = {
   activeTab: "home" | "history" | "notifications" | "profile"
   notificationCount?: number
 }
 
-export default function BottomNavigation({ activeTab, notificationCount = 0 }: BottomNavigationProps) {
+// Update the component to use the global notification context
+export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
   const router = useRouter()
+  const { unreadCount } = useContext(NotificationContext)
 
   // Use a more direct approach to navigation to avoid TypeScript issues
   const navigateToHome = () => router.push("/home" as any)
@@ -32,9 +36,9 @@ export default function BottomNavigation({ activeTab, notificationCount = 0 }: B
       <TouchableOpacity style={styles.tabItem} onPress={navigateToNotifications} activeOpacity={0.7}>
         <View style={styles.notificationIconContainer}>
           <Bell size={22} color={activeTab === "notifications" ? "#15B2BF" : "#666"} />
-          {notificationCount > 0 && (
+          {unreadCount > 0 && (
             <View style={styles.badgeContainer}>
-              <Text style={styles.badgeText}>{notificationCount > 99 ? "99+" : notificationCount}</Text>
+              <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
             </View>
           )}
         </View>

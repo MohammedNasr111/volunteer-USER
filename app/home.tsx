@@ -81,6 +81,7 @@ export default function HomeScreen() {
   const [isFiltered, setIsFiltered] = useState(false)
   const [organizations, setOrganizations] = useState<Organization[]>([])
   const [loadingOrganizations, setLoadingOrganizations] = useState(false)
+  const [showAllNewOpportunities, setShowAllNewOpportunities] = useState(false)
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -252,79 +253,89 @@ export default function HomeScreen() {
           return dateB - dateA
         })
 
-        // Limit to 4 items after sorting
-        setNewOpportunities(filteredNewOppsData.slice(0, 4))
+        // Show all matching opportunities instead of limiting to 4
+        setNewOpportunities(filteredNewOppsData)
         console.log(`Filtered to ${filteredNewOppsData.length} matching opportunities`)
 
-        // For popular opportunities, get ALL opportunities regardless of user preferences
+        // For popular opportunities, get opportunities that DON'T match user preferences
         const popularOppsSnapshot = await getDocs(popularOppsQuery)
         const popularOppsData = await Promise.all(
-          popularOppsSnapshot.docs.map(async (docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
-            const data = docSnapshot.data() as CauseData
-            let opportunityDate: Date | null = null
-            try {
-              opportunityDate = data.date ? new Date(data.date) : null
-            } catch (e) {
-              opportunityDate = null
-            }
+          popularOppsSnapshot.docs
+            .filter((docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+              const data = docSnapshot.data() as CauseData
+              const docCauseTypes = data.causeTypes || []
 
-            // Only include future opportunities
-            if (opportunityDate && opportunityDate < now) {
-              return null // Skip past opportunities
-            }
+              // Check if NONE of the user's preferences match this document's cause types
+              // This is the opposite of the filter for new opportunities
+              const hasNoMatchingCause = !userCausePreferences.some((pref) => {
+                return docCauseTypes.some(
+                  (docType: string) => typeof docType === "string" && docType.toLowerCase() === pref.toLowerCase(),
+                )
+              })
 
-            // Fetch organization data if createdBy is available
-            let orgName = data.organizationName || ""
-            let orgLogo = data.organizationLogo || ""
-
-            if (data.createdBy && (!orgName || !orgLogo)) {
+              return hasNoMatchingCause
+            })
+            .map(async (docSnapshot: QueryDocumentSnapshot<DocumentData>) => {
+              const data = docSnapshot.data() as CauseData
+              let opportunityDate: Date | null = null
               try {
-                const orgDoc = await getDoc(doc(db, "admins", data.createdBy))
-                if (orgDoc.exists()) {
-                  const orgData = orgDoc.data() as OrgData
-                  if (!orgName && orgData.organizationName) {
-                    orgName = orgData.organizationName
-                  }
-                  if (!orgLogo && orgData.photoURL) {
-                    orgLogo = orgData.photoURL
-                  }
-                }
-              } catch (error) {
-                console.error("Error fetching organization data:", error)
+                opportunityDate = data.date ? new Date(data.date) : null
+              } catch (e) {
+                opportunityDate = null
               }
-            }
 
-            return {
-              id: docSnapshot.id,
-              name: data.name || "",
-              imageUrl: data.imageUrl || "",
-              date: data.date || "",
-              time: data.time || "",
-              city: data.city || "",
-              volunteers: data.volunteers || "0",
-              organizationName: orgName,
-              organizationLogo: orgLogo,
-              createdBy: data.createdBy || "",
-              description: data.description || "",
-              registeredCount: data.registeredCount || 0,
-              createdAt: data.createdAt || "",
-            } as Opportunity
-          }),
+              // Only include future opportunities
+              if (opportunityDate && opportunityDate < now) {
+                return null // Skip past opportunities
+              }
+
+              // Fetch organization data if createdBy is available
+              let orgName = data.organizationName || ""
+              let orgLogo = data.organizationLogo || ""
+
+              if (data.createdBy && (!orgName || !orgLogo)) {
+                try {
+                  const orgDoc = await getDoc(doc(db, "admins", data.createdBy))
+                  if (orgDoc.exists()) {
+                    const orgData = orgDoc.data() as OrgData
+                    if (!orgName && orgData.organizationName) {
+                      orgName = orgData.organizationName
+                    }
+                    if (!orgLogo && orgData.photoURL) {
+                      orgLogo = orgData.photoURL
+                    }
+                  }
+                } catch (error) {
+                  console.error("Error fetching organization data:", error)
+                }
+              }
+
+              return {
+                id: docSnapshot.id,
+                name: data.name || "",
+                imageUrl: data.imageUrl || "",
+                date: data.date || "",
+                time: data.time || "",
+                city: data.city || "",
+                volunteers: data.volunteers || "0",
+                organizationName: orgName,
+                organizationLogo: orgLogo,
+                createdBy: data.createdBy || "",
+                description: data.description || "",
+                registeredCount: data.registeredCount || 0,
+                createdAt: data.createdAt || "",
+              } as Opportunity
+            }),
         )
 
         // Filter out null entries and sort
         const filteredPopularOppsData = popularOppsData.filter(Boolean) as Opportunity[]
 
-        // Sort by volunteers count in memory
-        filteredPopularOppsData.sort((a, b) => {
-          if (!a || !b) return 0
-          const volunteersA = Number.parseInt(a.volunteers || "0")
-          const volunteersB = Number.parseInt(b.volunteers || "0")
-          return volunteersB - volunteersA
-        })
+        // Shuffle the array to get random opportunities
+        const shuffledPopularOpps = [...filteredPopularOppsData].sort(() => 0.5 - Math.random())
 
-        // Limit to 4 items after sorting
-        setPopularOpportunities(filteredPopularOppsData.slice(0, 4))
+        // Limit to 4 items (2x2 grid) after shuffling
+        setPopularOpportunities(shuffledPopularOpps.slice(0, 4))
       } else {
         // If no preferences, show all opportunities for both sections
         console.log("No user preferences found, showing all opportunities")
@@ -401,8 +412,8 @@ export default function HomeScreen() {
           return dateB - dateA
         })
 
-        // Limit to 4 items after sorting
-        setNewOpportunities(filteredNewOppsData.slice(0, 4))
+        // Show all opportunities
+        setNewOpportunities(filteredNewOppsData)
 
         // Fetch popular opportunities - same as new opportunities but sorted differently
         const popularOppsSnapshot = await getDocs(popularOppsQuery)
@@ -466,16 +477,11 @@ export default function HomeScreen() {
         // Filter out null entries and sort
         const filteredPopularOppsData = popularOppsData.filter(Boolean) as Opportunity[]
 
-        // Sort by volunteers count in memory
-        filteredPopularOppsData.sort((a, b) => {
-          if (!a || !b) return 0
-          const volunteersA = Number.parseInt(a.volunteers || "0")
-          const volunteersB = Number.parseInt(b.volunteers || "0")
-          return volunteersB - volunteersA
-        })
+        // Shuffle the array to get random opportunities
+        const shuffledPopularOpps = [...filteredPopularOppsData].sort(() => 0.5 - Math.random())
 
-        // Limit to 4 items after sorting
-        setPopularOpportunities(filteredPopularOppsData.slice(0, 4))
+        // Limit to 4 items (2x2 grid) after shuffling
+        setPopularOpportunities(shuffledPopularOpps.slice(0, 4))
       }
     } catch (error) {
       console.error("Error fetching opportunities:", error)
@@ -885,6 +891,7 @@ export default function HomeScreen() {
                 numColumns={2}
                 columnWrapperStyle={styles.columnWrapper}
                 scrollEnabled={false}
+                nestedScrollEnabled={true}
               />
             </View>
           )}
@@ -910,6 +917,7 @@ export default function HomeScreen() {
                 numColumns={2}
                 columnWrapperStyle={styles.columnWrapper}
                 scrollEnabled={false}
+                nestedScrollEnabled={true}
               />
             </View>
           )}
@@ -950,7 +958,11 @@ export default function HomeScreen() {
       </TouchableOpacity>
 
       {/* The rest of the content remains the same */}
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollViewContent}
+      >
         {/* Render different content based on active tab */}
         {activeTab === "causes" ? renderCausesView() : renderOrganizationsView()}
 
@@ -1032,6 +1044,9 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  scrollViewContent: {
+    paddingBottom: 100, // Add padding at the bottom for better scrolling
   },
   sectionContainer: {
     marginBottom: 25,

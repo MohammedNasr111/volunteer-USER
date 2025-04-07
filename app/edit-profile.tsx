@@ -273,9 +273,6 @@ export default function EditProfileScreen() {
         return
       }
 
-      // Remove this line:
-      // const { updatePassword } = await import("firebase/auth")
-
       // Update the password
       await updatePassword(user, newPassword)
 
@@ -398,10 +395,14 @@ export default function EditProfileScreen() {
               </TouchableOpacity>
             </View>
             {editingEmail && (
-              <Text style={styles.emailWarning}>
-                Note: Changing your email here will only update it in your profile. You'll still need to use your
-                original email to log in.
-              </Text>
+              <View style={styles.emailWarningContainer}>
+                <Text style={styles.emailWarningTitle}>Important Notice:</Text>
+                <Text style={styles.emailWarning}>
+                  Changing your email here will only update how it appears in your profile. Your sign-in email will
+                  remain unchanged. You must continue using your original email address ({originalEmail}) for logging
+                  in.
+                </Text>
+              </View>
             )}
           </View>
 
@@ -605,25 +606,23 @@ const styles = StyleSheet.create({
     color: "#666",
     marginTop: 5,
   },
+  emailWarningContainer: {
+    backgroundColor: "#FFF9C4",
+    borderRadius: 5,
+    padding: 10,
+    marginTop: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: "#FFC107",
+  },
+  emailWarningTitle: {
+    fontWeight: "bold",
+    color: "#D32F2F",
+    marginBottom: 4,
+  },
   emailWarning: {
     fontSize: 12,
-    color: "#FF4757",
-    marginTop: 5,
-    fontStyle: "italic",
-  },
-  confirmButton: {
-    backgroundColor: "#000",
-    borderRadius: 25,
-    paddingVertical: 12,
-    marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 100,
-    alignItems: "center",
-  },
-  confirmButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
+    color: "#333",
+    lineHeight: 18,
   },
   errorText: {
     color: "#FF4757",
@@ -653,6 +652,20 @@ const styles = StyleSheet.create({
   },
   savePasswordButtonText: {
     color: "#fff",
+    fontWeight: "bold",
+  },
+  confirmButton: {
+    backgroundColor: "#000",
+    borderRadius: 25,
+    paddingVertical: 12,
+    marginHorizontal: 20,
+    marginTop: 20,
+    marginBottom: 100,
+    alignItems: "center",
+  },
+  confirmButtonText: {
+    color: "#fff",
+    fontSize: 16,
     fontWeight: "bold",
   },
 })
