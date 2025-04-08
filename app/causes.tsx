@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useContext } from "react"
 import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList } from "react-native"
 import { useRouter, useLocalSearchParams } from "expo-router"
 import { StatusBar } from "expo-status-bar"
@@ -7,6 +7,7 @@ import { ArrowLeft, Check } from "lucide-react-native"
 import { useFonts } from "expo-font"
 import { doc, updateDoc, getDoc } from "firebase/firestore"
 import { auth, db } from "./firebase/config"
+import { NotificationContext } from "./_layout"
 
 // Define the causes data
 const causesData = [
@@ -34,6 +35,8 @@ export default function CausesScreen() {
 
   const [selectedCauses, setSelectedCauses] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+
+  const { createNotification } = useContext(NotificationContext)
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -95,10 +98,46 @@ export default function CausesScreen() {
       const userId = auth.currentUser?.uid
 
       if (userId) {
+        // Get previous cause preferences to compare
+        let previousCauses: string[] = []
+        const userDoc = await getDoc(doc(db, "users", userId))
+        if (userDoc.exists()) {
+          const userData = userDoc.data()
+          previousCauses = userData.cause_preferences || []
+        }
+
         // Save selected causes to Firestore
         await updateDoc(doc(db, "users", userId), {
           cause_preferences: selectedCauses,
         })
+
+        // Create notification for cause preferences update
+        const newCauses = selectedCauses.filter((cause) => !previousCauses.includes(cause))
+        const removedCauses = previousCauses.filter((cause) => !selectedCauses.includes(cause))
+
+        if (newCauses.length > 0 || removedCauses.length > 0) {
+          let message = "Your cause preferences have been updated."
+          if (newCauses.length > 0) {
+            // Map cause IDs to proper names
+            const newCauseNames = newCauses.map((causeId) => {
+              // Convert cause ID to proper name
+              const causeName = causesData.find((c) => c.id === causeId)?.name || causeId
+              return causeName
+            })
+            message += ` Added: ${newCauseNames.join(", ")}.`
+          }
+          if (removedCauses.length > 0) {
+            // Map cause IDs to proper names
+            const removedCauseNames = removedCauses.map((causeId) => {
+              // Convert cause ID to proper name
+              const causeName = causesData.find((c) => c.id === causeId)?.name || causeId
+              return causeName
+            })
+            message += ` Removed: ${removedCauseNames.join(", ")}.`
+          }
+
+          await createNotification("cause_preferences", "Cause Preferences Updated", message)
+        }
       }
 
       // Navigate to frequency page
@@ -310,4 +349,3 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
 })
-

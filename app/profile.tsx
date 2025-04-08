@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useContext } from "react"
 import {
   View,
   Text,
@@ -28,12 +28,16 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
 import { useFocusEffect } from "@react-navigation/native"
 import { getDatabase, ref as realtimeRef, onValue } from "firebase/database"
 
+// Import the NotificationContext
+import { NotificationContext } from "./_layout"
+
 // Get screen width
 const screenWidth = Dimensions.get("window").width
 
 // Add a global update function at the top of the file, after imports
 declare global {
   var updateProfileData: ((data: any) => void) | null
+  var setIsManualSignOut: ((value: boolean) => void) | null
 }
 
 // Initialize Firebase Realtime Database
@@ -259,6 +263,9 @@ export default function ProfileScreen() {
   const [uploadingImage, setUploadingImage] = useState(false)
   const [showRankInfo, setShowRankInfo] = useState(false)
 
+  // Add this inside the ProfileScreen component, near the other state variables
+  const { createNotification } = useContext(NotificationContext)
+
   // Load the required fonts
   const [fontsLoaded] = useFonts({
     "Alata-Regular": require("../assets/fonts/Alata-Regular.ttf"),
@@ -474,14 +481,39 @@ export default function ProfileScreen() {
 
   const handleSignOut = async () => {
     try {
+      // Set the manual sign out flag to prevent automatic redirection
+      if (global.setIsManualSignOut) {
+        global.setIsManualSignOut(true)
+      }
+
+      // Create sign out notification
+      await createNotification("signout", "Sign Out Successful", "You have successfully signed out of your account.")
+
       // First navigate to splash screen, then sign out
       router.replace("/splash")
+
       // Add a small delay before signing out to ensure navigation completes
+      // and listeners have time to clean up
       setTimeout(() => {
+        // Detach all listeners before signing out
+        const firestore = db
+        const firestoreInternals = firestore as any
+
+        // Try to clean up listeners if the internal API is available
+        if (
+          firestoreInternals._delegate &&
+          firestoreInternals._delegate._firestoreClient &&
+          firestoreInternals._delegate._firestoreClient.clientTerminated
+        ) {
+          // Mark client as terminated to prevent new listeners
+          firestoreInternals._delegate._firestoreClient.clientTerminated = true
+        }
+
+        // Now sign out
         signOut(auth).catch((error) => {
           console.error("Error signing out:", error)
         })
-      }, 100)
+      }, 500)
     } catch (error) {
       console.error("Error during sign out process:", error)
     }
@@ -555,6 +587,13 @@ export default function ProfileScreen() {
         ...prev,
         photoURL: downloadURL,
       }))
+
+      // Create notification for profile picture update
+      await createNotification(
+        "profile_update",
+        "Profile Picture Updated",
+        "Your profile picture has been successfully updated.",
+      )
 
       Alert.alert("Success", "Profile picture updated successfully")
     } catch (error) {
@@ -1223,4 +1262,3 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
 })
-

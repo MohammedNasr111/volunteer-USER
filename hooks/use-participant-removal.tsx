@@ -107,7 +107,8 @@ export function useParticipantRemoval() {
         }
 
         setRemovalData(removalInfo)
-        setShowNotification(true)
+        // Don't show the notification modal
+        setShowNotification(false)
       }
     } catch (error) {
       console.error("Error checking for removal notifications:", error)
@@ -184,7 +185,8 @@ export function useParticipantRemoval() {
                 }
 
                 setRemovalData(removalInfo)
-                setShowNotification(true)
+                // Don't show the notification modal
+                setShowNotification(false)
               }
             }
           }
@@ -224,4 +226,3 @@ export function useParticipantRemoval() {
     checkForRemovalNotifications,
   }
 }
-

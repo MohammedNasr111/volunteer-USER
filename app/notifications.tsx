@@ -1,18 +1,9 @@
 "use client"
 import { useState, useEffect, useContext } from "react"
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  FlatList,
-  ActivityIndicator,
-  SafeAreaView,
-  Alert,
-} from "react-native"
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, SafeAreaView } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { ArrowLeft, Bell, Mail, CheckCircle, AlertCircle, Calendar, Clock } from "lucide-react-native"
+import { ArrowLeft, Bell, CheckCircle, AlertCircle, Calendar, Clock } from "lucide-react-native"
 import { collection, query, where, getDocs, orderBy, updateDoc, doc, getDoc, onSnapshot } from "firebase/firestore"
 import { auth, db } from "./firebase/config"
 import { useFonts } from "expo-font"
@@ -56,7 +47,7 @@ export default function NotificationsScreen() {
   useEffect(() => {
     const userId = auth.currentUser?.uid
     if (!userId) {
-      router.replace("/login")
+      router.replace("/splash")
       return
     }
 
@@ -200,7 +191,7 @@ export default function NotificationsScreen() {
       setLoading(true)
       const userId = auth.currentUser?.uid
       if (!userId) {
-        router.replace("/login")
+        router.replace("/splash")
         return
       }
 
@@ -319,7 +310,7 @@ export default function NotificationsScreen() {
         }
       }
 
-      // Always update local state regardless of Firestore success
+      // Update local state to mark as read but keep the notification in the list
       setNotifications((prev) =>
         prev.map((notification) =>
           notification.id === notificationId ? { ...notification, read: true } : notification,
@@ -346,34 +337,12 @@ export default function NotificationsScreen() {
     }
   }
 
-  // Modified to handle different notification types differently
+  // Update the handleNotificationPress function to only mark as read without navigation
   const handleNotificationPress = (notification: Notification) => {
     // Mark as read for all notification types
     markAsRead(notification.id, notification.type)
 
-    // Handle different notification types
-    if (notification.type === "removal") {
-      // For removal notifications, show an alert with details
-      Alert.alert(
-        "Removal Details",
-        `You were removed from "${notification.causeName}" due to: ${notification.reason}`,
-        [
-          { text: "Dismiss", style: "cancel" },
-          {
-            text: "Contact Organizer",
-            onPress: () => {
-              if (notification.adminEmail) {
-                Linking.openURL(
-                  `mailto:${notification.adminEmail}?subject=Regarding removal from ${notification.causeName}`,
-                )
-              }
-            },
-          },
-        ],
-      )
-    }
-    // For all other notification types, just mark as read without navigation
-    // We removed the navigation logic for other notification types
+    // No navigation or additional actions - just mark as read
   }
 
   const handleContactOrganizer = (notification: Notification) => {
@@ -402,6 +371,8 @@ export default function NotificationsScreen() {
         return <Calendar size={24} color="#15B2BF" />
       case "login":
         return <CheckCircle size={24} color="#15B2BF" />
+      case "signout":
+        return <CheckCircle size={24} color="#15B2BF" />
       default:
         return <Bell size={24} color="#15B2BF" />
     }
@@ -411,62 +382,72 @@ export default function NotificationsScreen() {
     return null // Return null while fonts are loading
   }
 
-  // Render notification item
+  // Replace the renderNotificationItem function with this combined version
   const renderNotificationItem = ({ item }: { item: Notification }) => {
     const isRemoval = item.type === "removal"
     const isSignup = item.type === "signup"
 
     return (
-      <TouchableOpacity
-        style={[styles.notificationItem, !item.read && styles.unreadNotification]}
-        onPress={() => handleNotificationPress(item)}
-      >
-        <View style={styles.notificationIconContainer}>{getNotificationIcon(item.type)}</View>
+      <View style={styles.notificationContainer}>
+        <TouchableOpacity
+          style={[styles.notificationItem, !item.read && styles.unreadNotification]}
+          onPress={() => handleNotificationPress(item)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.notificationIconContainer}>{getNotificationIcon(item.type)}</View>
 
-        <View style={styles.notificationContent}>
-          <View style={styles.notificationHeader}>
-            <Text style={styles.notificationTitle}>{item.title}</Text>
-            <Text style={styles.notificationTime}>{formatTime(item.timestamp)}</Text>
+          <View style={styles.notificationContent}>
+            <View style={styles.notificationHeader}>
+              <Text style={styles.notificationTitle}>{item.title}</Text>
+              <Text style={styles.notificationTime}>{formatTime(item.timestamp)}</Text>
+            </View>
+            <Text style={styles.notificationMessage}>{item.message}</Text>
+
+            {isRemoval && (
+              <View style={styles.removalInfo}>
+                <Text style={styles.removalInfoText}>
+                  For further information, contact: {item.adminEmail || "the organization"}
+                </Text>
+              </View>
+            )}
+
+            {isSignup && item.date && item.time && (
+              <View style={styles.eventDetails}>
+                <View style={styles.eventDetailRow}>
+                  <Calendar size={14} color="#666" style={styles.eventDetailIcon} />
+                  <Text style={styles.eventDetailText}>{item.date}</Text>
+                </View>
+                <View style={styles.eventDetailRow}>
+                  <Clock size={14} color="#666" style={styles.eventDetailIcon} />
+                  <Text style={styles.eventDetailText}>{item.time}</Text>
+                </View>
+              </View>
+            )}
           </View>
-          <Text style={styles.notificationMessage}>{item.message}</Text>
 
-          {isSignup && item.date && item.time && (
-            <View style={styles.eventDetails}>
-              <View style={styles.eventDetailRow}>
-                <Calendar size={14} color="#666" style={styles.eventDetailIcon} />
-                <Text style={styles.eventDetailText}>{item.date}</Text>
-              </View>
-              <View style={styles.eventDetailRow}>
-                <Clock size={14} color="#666" style={styles.eventDetailIcon} />
-                <Text style={styles.eventDetailText}>{item.time}</Text>
-              </View>
-            </View>
-          )}
+          {!item.read && <View style={styles.unreadIndicator} />}
+        </TouchableOpacity>
 
-          {isRemoval && (
-            <View style={styles.removalActions}>
-              <TouchableOpacity style={styles.contactButton} onPress={() => handleContactOrganizer(item)}>
-                <Mail size={14} color="#fff" style={styles.buttonIcon} />
-                <Text style={styles.contactButtonText}>Contact Organizer</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-
-        {!item.read && <View style={styles.unreadIndicator} />}
-      </TouchableOpacity>
+        {/* Contact button outside the TouchableOpacity */}
+        {isRemoval && item.adminEmail && (
+          <TouchableOpacity onPress={() => handleContactOrganizer(item)} style={styles.contactButton}>
+            <Text style={styles.contactButtonText}>Contact Organizer</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     )
   }
 
-  // Render section header
-  const renderSectionHeader = ({ section }: { section: { title: string } }) => (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionHeaderText}>{section.title}</Text>
+  // Update the header section to remove the Clear All button
+  const header = (
+    <View style={styles.header}>
+      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <ArrowLeft size={24} color="#000" />
+      </TouchableOpacity>
+      <Text style={styles.headerTitle}>Notifications</Text>
+      <View style={styles.headerRight} />
     </View>
   )
-
-  // Count unread notifications
-  const unreadCount = notifications.filter((n) => !n.read).length
 
   return (
     <SafeAreaView style={styles.container}>
@@ -476,20 +457,22 @@ export default function NotificationsScreen() {
       <View style={styles.statusBarSpacer} />
 
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <ArrowLeft size={24} color="#000" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Notifications</Text>
-        <View style={styles.headerRight} />
-      </View>
+      {header}
 
-      {/* Notifications List */}
+      {/* Notifications List - Always show the list, never show empty state */}
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#15B2BF" />
         </View>
-      ) : Object.keys(groupedNotifications).length > 0 ? (
+      ) : Object.keys(groupedNotifications).length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Bell size={48} color="#ccc" />
+          <Text style={styles.emptyTitle}>All notifications read up to date</Text>
+          <Text style={styles.emptyText}>
+            Here is where you'll receive notifications about upcoming causes and activities
+          </Text>
+        </View>
+      ) : (
         <FlatList
           data={Object.entries(groupedNotifications).map(([date, notifications]) => ({
             title: date,
@@ -508,12 +491,6 @@ export default function NotificationsScreen() {
           keyExtractor={(item) => item.title}
           contentContainerStyle={styles.notificationsList}
         />
-      ) : (
-        <View style={styles.emptyContainer}>
-          <Bell size={60} color="#ccc" />
-          <Text style={styles.emptyText}>No notifications yet</Text>
-          <Text style={styles.emptySubtext}>You'll see notifications about your volunteer activities here</Text>
-        </View>
       )}
 
       {/* Bottom Navigation with Badge */}
@@ -550,7 +527,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   headerRight: {
-    width: 40,
+    width: 40, // Keep this to maintain header layout balance
   },
   loadingContainer: {
     flex: 1,
@@ -572,6 +549,9 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 14,
   },
+  notificationContainer: {
+    marginBottom: 15,
+  },
   notificationItem: {
     backgroundColor: "#fff",
     borderRadius: 10,
@@ -585,6 +565,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
+    overflow: "hidden", // Add this to contain child elements
   },
   notificationIconContainer: {
     marginRight: 15,
@@ -644,19 +625,21 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    padding: 20,
+    padding: 40,
   },
-  emptyText: {
+  emptyTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 18,
+    fontSize: 22,
     marginTop: 20,
     marginBottom: 10,
+    color: "#333",
   },
-  emptySubtext: {
-    fontSize: 14,
+  emptyText: {
+    fontFamily: "Alata-Regular",
+    fontSize: 16,
     color: "#666",
     textAlign: "center",
-    maxWidth: "80%",
+    lineHeight: 24,
   },
   removalActions: {
     flexDirection: "row",
@@ -664,20 +647,28 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   contactButton: {
-    backgroundColor: "#15B2BF",
+    marginTop: 8,
+    marginLeft: 49, // To align with content
+    alignSelf: "flex-start",
     paddingVertical: 6,
     paddingHorizontal: 12,
-    borderRadius: 15,
-    flexDirection: "row",
-    alignItems: "center",
+    backgroundColor: "#15B2BF",
+    borderRadius: 4,
   },
   contactButtonText: {
-    color: "#fff",
+    color: "white",
     fontSize: 12,
     fontWeight: "bold",
   },
-  buttonIcon: {
-    marginRight: 5,
+  removalInfo: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#f0f0f0",
+  },
+  removalInfoText: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
   },
 })
-

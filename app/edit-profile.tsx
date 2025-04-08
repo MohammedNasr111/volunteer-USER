@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useContext } from "react"
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import { useFonts } from "expo-font"
 import BottomNavigation from "../components/bottom-navigation"
 import * as ImagePicker from "expo-image-picker"
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"
+import { NotificationContext } from "./_layout"
 
 export default function EditProfileScreen() {
   const router = useRouter()
@@ -56,6 +57,8 @@ export default function EditProfileScreen() {
     "AbhayaLibre-Regular": require("../assets/fonts/AbhayaLibre-Regular.ttf"),
     "AbhayaLibre-ExtraBold": require("../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
   })
+
+  const { createNotification } = useContext(NotificationContext)
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -118,6 +121,7 @@ export default function EditProfileScreen() {
     }
   }
 
+  // Update the uploadProfileImage function to ensure notification is created
   const uploadProfileImage = async (uri: string) => {
     try {
       setUploadingImage(true)
@@ -146,12 +150,22 @@ export default function EditProfileScreen() {
       })
 
       // Update local state
-      setProfileImage(downloadURL)
-      // Also update userData to ensure it's included when saving the profile
       setUserData((prev: any) => ({
         ...prev,
         photoURL: downloadURL,
       }))
+
+      // Create notification for profile picture update
+      try {
+        await createNotification(
+          "profile_update",
+          "Profile Picture Updated",
+          "Your profile picture has been successfully updated.",
+        )
+      } catch (error) {
+        console.error("Error creating profile picture notification:", error)
+        // Continue anyway since this is non-critical
+      }
 
       Alert.alert("Success", "Profile picture updated successfully")
     } catch (error) {
@@ -177,6 +191,13 @@ export default function EditProfileScreen() {
       // Check if email was changed
       const emailChanged = email !== originalEmail
 
+      // Check what fields were changed to create appropriate notifications
+      const fieldsChanged = []
+      if (firstName !== userData.firstName) fieldsChanged.push("first name")
+      if (lastName !== userData.lastName) fieldsChanged.push("last name")
+      if (email !== userData.email) fieldsChanged.push("email")
+      if (phoneNumber !== userData.phoneNumber) fieldsChanged.push("phone number")
+
       // Update user document in Firestore
       await updateDoc(doc(db, "users", userId), {
         firstName,
@@ -184,6 +205,15 @@ export default function EditProfileScreen() {
         email,
         phoneNumber,
       })
+
+      // Create notification for profile update
+      if (fieldsChanged.length > 0) {
+        await createNotification(
+          "profile_update",
+          "Profile Updated",
+          `Your profile ${fieldsChanged.join(", ")} ${fieldsChanged.length > 1 ? "have" : "has"} been updated successfully.`,
+        )
+      }
 
       // Create updated user data to pass back to profile page
       const updatedUserData = {
@@ -275,6 +305,9 @@ export default function EditProfileScreen() {
 
       // Update the password
       await updatePassword(user, newPassword)
+
+      // Create notification for password update
+      await createNotification("profile_update", "Password Updated", "Your password has been updated successfully.")
 
       // Reset form and show success message
       setNewPassword("")
@@ -669,4 +702,3 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
 })
-

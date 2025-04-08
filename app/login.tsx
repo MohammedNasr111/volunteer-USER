@@ -1,12 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useContext } from "react"
 import { View, Text, StyleSheet, TouchableOpacity, TextInput } from "react-native"
 import { Link, useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { X, ArrowLeft } from "lucide-react-native"
 import { useFonts } from "expo-font"
 import { loginUser } from "./firebase/users"
+import { NotificationContext } from "./_layout"
 
 export default function LoginScreen() {
   const router = useRouter()
@@ -14,6 +15,9 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+
+  // Add this inside the LoginScreen component, near the other state variables
+  const { createNotification } = useContext(NotificationContext)
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -39,6 +43,9 @@ export default function LoginScreen() {
 
       // Use the enhanced login function
       await loginUser(email, password)
+
+      // Create login notification
+      await createNotification("login", "Login Successful", "You have successfully logged into your account.")
 
       router.replace("/home")
     } catch (error: any) {
@@ -195,4 +202,3 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
 })
-

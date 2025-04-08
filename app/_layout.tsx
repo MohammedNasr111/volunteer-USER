@@ -8,22 +8,31 @@ import "./firebase/config" // Firebase config
 import { onAuthStateChanged, type User } from "firebase/auth" // Import User type
 import { auth, db } from "./firebase/config"
 import { useParticipantRemoval } from "../hooks/use-participant-removal"
-import RemovalNotificationModal from "../components/removal-notification-modal"
-import { collection, query, where, getDocs, onSnapshot } from "firebase/firestore"
+import { collection, query, where, getDocs, onSnapshot, addDoc } from "firebase/firestore"
 
-// Create a context for notification count
+// Add more notification types to the context
 export const NotificationContext = createContext<{
   unreadCount: number
   setUnreadCount: (count: number) => void
   refreshUnreadCount: () => void
+  createNotification: (type: string, title: string, message: string, additionalData?: any) => Promise<void>
 }>({
   unreadCount: 0,
   setUnreadCount: () => {},
   refreshUnreadCount: () => {},
+  createNotification: async () => {},
 })
 
 // Ignore specific warnings that might come from dependencies
-LogBox.ignoreLogs(["Warning: Failed prop type", "AsyncStorage has been extracted"])
+LogBox.ignoreLogs([
+  "Warning: Failed prop type",
+  "AsyncStorage has been extracted",
+  "@firebase/firestore: Firestore (11.4.0): WebChannelConnection RPC 'Listen' stream",
+  // Add this new line to ignore the specific sign-out warning
+  "WebChannelConnection RPC 'Listen' stream",
+  // Add this to ignore any notifications-related warnings
+  "Possible Unhandled Promise Rejection",
+])
 
 export default function Layout() {
   const [initializing, setInitializing] = useState(true)
@@ -32,11 +41,63 @@ export default function Layout() {
 
   // Add state for notification count
   const [unreadCount, setUnreadCount] = useState(0)
+  // Add a flag to prevent automatic redirection on sign-out
+  const [isManualSignOut, setIsManualSignOut] = useState(false)
+  // Add a flag to prevent duplicate login notifications
+  const [hasCreatedLoginNotification, setHasCreatedLoginNotification] = useState(false)
+
+  // Function to create a new notification
+  const createNotification = async (
+    type: string,
+    title: string,
+    message: string,
+    additionalData?: any,
+  ): Promise<void> => {
+    const userId = auth.currentUser?.uid
+    if (!userId) return
+
+    // Prevent duplicate login notifications
+    if (type === "login" && hasCreatedLoginNotification) {
+      return
+    }
+
+    try {
+      // Create the notification directly
+      const notificationsRef = collection(db, "notifications")
+
+      const notificationData = {
+        userId,
+        type,
+        title,
+        message,
+        timestamp: new Date().toISOString(),
+        read: false,
+        ...additionalData,
+      }
+
+      await addDoc(notificationsRef, notificationData)
+
+      // If it's a login notification, set the flag
+      if (type === "login") {
+        setHasCreatedLoginNotification(true)
+      }
+
+      // Refresh unread count after creating a notification
+      refreshUnreadCount()
+
+      console.log(`Created notification: ${type} - ${title}`)
+    } catch (error) {
+      console.error("Error creating notification:", error)
+    }
+  }
 
   // Function to refresh unread notification count
   const refreshUnreadCount = async () => {
     const userId = auth.currentUser?.uid
-    if (!userId) return
+    if (!userId) {
+      setUnreadCount(0)
+      return
+    }
 
     try {
       // Count unread regular notifications
@@ -53,32 +114,51 @@ export default function Layout() {
       const totalUnread = notificationsSnapshot.size + removalsSnapshot.size
       setUnreadCount(totalUnread)
     } catch (error) {
-      console.error("Error counting unread notifications:", error)
+      // Only log error if it's not a permissions error during sign-out
+      if (auth.currentUser) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        if (!errorMessage.includes("Missing or insufficient permissions")) {
+          console.error("Error counting unread notifications:", error)
+        }
+      }
     }
   }
 
   useEffect(() => {
     // Listen for authentication state changes
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      const previousUser = auth.currentUser
       setUser(user)
-      if (initializing) setInitializing(false)
+
+      if (initializing) {
+        setInitializing(false)
+      }
 
       // Check for removal notifications when user logs in
       if (user) {
         try {
           checkForRemovalNotifications()
           refreshUnreadCount() // Count unread notifications on login
+
+          // Reset the manual sign out flag when user logs in
+          setIsManualSignOut(false)
+
+          // Reset the login notification flag when user changes
+          if (!previousUser || previousUser.uid !== user.uid) {
+            setHasCreatedLoginNotification(false)
+          }
         } catch (error) {
           console.log("Error checking for removal notifications, will retry on next login")
         }
+      } else if (!isManualSignOut) {
+        // Only redirect if it's not a manual sign out
+        // This allows the profile page to handle the redirection
       }
-      // We're NOT redirecting when user is null (signed out)
-      // This allows the profile page to handle the redirection
     })
 
     // Cleanup subscription
     return unsubscribe
-  }, [initializing, checkForRemovalNotifications])
+  }, [initializing, checkForRemovalNotifications, isManualSignOut])
 
   // Set up real-time listener for notification changes
   useEffect(() => {
@@ -86,7 +166,7 @@ export default function Layout() {
     if (!userId) {
       // If no user, reset unread count to 0
       setUnreadCount(0)
-      return
+      return () => {}
     }
 
     let unsubscribeNotifications = () => {}
@@ -141,10 +221,50 @@ export default function Layout() {
     }
   }, [auth.currentUser?.uid])
 
+  // Add this new useEffect to handle sign-out cleanup
+  useEffect(() => {
+    // Listen for auth state changes to clean up listeners when user signs out
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (!user) {
+        // User has signed out, make sure to clean up any remaining listeners
+        try {
+          // Force detach any remaining listeners
+          const firestore = db
+          const firestoreInternals = firestore as any
+
+          if (firestoreInternals._delegate && firestoreInternals._delegate._firestoreClient) {
+            // Try to terminate client connections gracefully
+            if (typeof firestoreInternals.terminate === "function") {
+              firestoreInternals.terminate().catch(() => {
+                // Ignore errors during termination
+              })
+            }
+          }
+        } catch (error) {
+          // Ignore errors during cleanup
+        }
+      }
+    })
+
+    return () => unsubscribe()
+  }, [])
+
+  // Export the setIsManualSignOut function to the global scope
+  // so it can be called from the profile page
+  useEffect(() => {
+    // @ts-ignore - Add to global scope
+    global.setIsManualSignOut = setIsManualSignOut
+
+    return () => {
+      // @ts-ignore - Clean up global function
+      global.setIsManualSignOut = undefined
+    }
+  }, [])
+
   if (initializing) return null
 
   return (
-    <NotificationContext.Provider value={{ unreadCount, setUnreadCount, refreshUnreadCount }}>
+    <NotificationContext.Provider value={{ unreadCount, setUnreadCount, refreshUnreadCount, createNotification }}>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
@@ -157,9 +277,8 @@ export default function Layout() {
         <Stack.Screen name="location" />
       </Stack>
 
-      {/* Removal notification modal */}
-      <RemovalNotificationModal visible={showNotification} onClose={closeNotification} removalData={removalData} />
+      {/* Removal notification modal - disabled as per new requirements */}
+      {/* <RemovalNotificationModal visible={showNotification} onClose={closeNotification} removalData={removalData} /> */}
     </NotificationContext.Provider>
   )
 }
-

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useContext } from "react"
 import {
   View,
   Text,
@@ -13,9 +13,10 @@ import {
   Alert,
 } from "react-native"
 import { ref, set, get, runTransaction, onValue } from "firebase/database"
-import { doc, updateDoc, arrayUnion, arrayRemove, getDoc, collection, addDoc } from "firebase/firestore"
+import { doc, updateDoc, arrayUnion, arrayRemove, getDoc } from "firebase/firestore"
 import { auth, db, realtimeDb } from "../app/firebase/config"
 import { ArrowLeft, CheckCircle2, X } from "lucide-react-native"
+import { NotificationContext } from "../app/_layout"
 
 interface JoinCauseFlowProps {
   isVisible: boolean
@@ -48,6 +49,8 @@ export default function JoinCauseFlow({
   const [errorMessage, setErrorMessage] = useState("")
   const [alreadyRegistered, setAlreadyRegistered] = useState(false)
   const [joining, setJoining] = useState(false)
+
+  const { createNotification } = useContext(NotificationContext)
 
   // Fetch user data and check if already registered
   useEffect(() => {
@@ -341,24 +344,17 @@ export default function JoinCauseFlow({
 
       // Create a notification for the signup
       try {
-        const opportunity = {
-          name: causeName,
-          date: causeDate,
-          time: causeTime,
-        }
-        const notificationsRef = collection(db, "notifications")
-        await addDoc(notificationsRef, {
-          userId: userId,
-          type: "signup",
-          title: "Successful Sign Up!",
-          message: `You have successfully signed up for "${opportunity?.name}"`,
-          timestamp: new Date().toISOString(),
-          read: false,
-          causeName: opportunity?.name,
-          causeId: causeId,
-          date: opportunity?.date,
-          time: opportunity?.time,
-        })
+        await createNotification(
+          "signup",
+          "Successful Sign Up!",
+          `You have successfully signed up for "${causeName}"`,
+          {
+            causeName: causeName,
+            causeId: causeId,
+            date: causeDate,
+            time: causeTime,
+          },
+        )
       } catch (error) {
         console.error("Error creating signup notification:", error)
         // Continue anyway since this is non-critical
@@ -816,4 +812,3 @@ const styles = StyleSheet.create({
     color: "#666",
   },
 })
-

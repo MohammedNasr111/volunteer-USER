@@ -1,4 +1,4 @@
-import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore"
+import { doc, setDoc, getDoc, updateDoc, collection, addDoc } from "firebase/firestore"
 import { db, auth } from "./config"
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth"
 
@@ -80,6 +80,9 @@ export const loginUser = async (email: string, password: string) => {
       throw new Error("admin_not_allowed")
     }
 
+    // Remove the notification creation from here to prevent duplicates
+    // It's now handled in the login screen
+
     return { user, userData }
   } catch (error: any) {
     // Re-throw the error to be handled by the calling function
@@ -87,7 +90,7 @@ export const loginUser = async (email: string, password: string) => {
   }
 }
 
-// Enhanced signup function that sets the user role
+// Update the signupUser function to create a notification
 export const signupUser = async (email: string, password: string, userData: any) => {
   try {
     // Create the user in Firebase Auth
@@ -100,6 +103,22 @@ export const signupUser = async (email: string, password: string, userData: any)
       email,
       role: UserRole.USER,
     })
+
+    // Create signup notification
+    try {
+      const notificationsRef = collection(db, "notifications")
+      await addDoc(notificationsRef, {
+        userId: user.uid,
+        type: "signup",
+        title: "Account Created",
+        message: "Your account has been successfully created. Welcome to Volunteer&Connect!",
+        timestamp: new Date().toISOString(),
+        read: false,
+      })
+    } catch (error) {
+      console.error("Error creating signup notification:", error)
+      // Continue anyway since this is non-critical
+    }
 
     return { user, userData: { ...userData, role: UserRole.USER } }
   } catch (error) {
@@ -117,4 +136,3 @@ export default {
   signupUser,
   UserRole,
 }
-

@@ -15,6 +15,12 @@ interface RemovalNotificationModalProps {
 }
 
 const RemovalNotificationModal: React.FC<RemovalNotificationModalProps> = ({ visible, onClose, removalData }) => {
+  // Since we're not using the modal anymore, we'll simplify it
+  // The component will still exist but won't be shown
+
+  // Update the component to return null if not visible
+  if (!visible) return null
+
   if (!removalData) return null
 
   const handleContactOrganizer = () => {
@@ -58,6 +64,8 @@ const RemovalNotificationModal: React.FC<RemovalNotificationModalProps> = ({ vis
     onClose()
   }
 
+  // Keep the rest of the component for backward compatibility
+  // but it won't be shown to users anymore
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
@@ -229,4 +237,3 @@ const styles = StyleSheet.create({
 })
 
 export default RemovalNotificationModal
-
