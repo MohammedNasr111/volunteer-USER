@@ -9,7 +9,6 @@ import { db, realtimeDb } from "../app/firebase/config"
 import { Calendar, Clock } from "lucide-react-native"
 
 export interface Opportunity {
-  causeTypes: any
   id: string
   name: string
   imageUrl?: string
@@ -23,6 +22,15 @@ export interface Opportunity {
   description?: string
   registeredCount?: number
   createdAt?: string
+  causeTypes?: string[]
+  location?: {
+    address?: string
+    coordinates?: {
+      lat: number
+      lng: number
+    }
+  }
+  distanceFromUser?: number | null
 }
 
 interface OpportunityCardProps {
@@ -32,19 +40,19 @@ interface OpportunityCardProps {
 
 const OpportunityCard: React.FC<OpportunityCardProps> = ({ opportunity, onPress }) => {
   // Add safety check for undefined opportunity
-  if (!opportunity) {
-    return null
-  }
-
-  const initialRegisteredCount = opportunity.registeredCount || 0
-  const initialOrgName = opportunity.organizationName || ""
-  const initialOrgLogo = opportunity.organizationLogo || ""
+  const initialRegisteredCount = opportunity?.registeredCount || 0
+  const initialOrgName = opportunity?.organizationName || ""
+  const initialOrgLogo = opportunity?.organizationLogo || ""
 
   const [registeredCount, setRegisteredCount] = useState(initialRegisteredCount)
   const [orgName, setOrgName] = useState(initialOrgName)
   const [orgLogo, setOrgLogo] = useState(initialOrgLogo)
 
   const [isOrgDataLoading, setIsOrgDataLoading] = useState(false)
+
+  if (!opportunity) {
+    return null
+  }
 
   // Format date and time for display (e.g., "Tue, 8 Apr • 08:00")
   const formatDateAndTime = (dateString?: string, timeString?: string) => {
@@ -344,4 +352,3 @@ const styles = StyleSheet.create({
 })
 
 export default OpportunityCard
-

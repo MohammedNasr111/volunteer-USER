@@ -510,14 +510,21 @@ export default function ProfileScreen() {
         const firestore = db
         const firestoreInternals = firestore as any
 
-        // Try to clean up listeners if the internal API is available
-        if (
-          firestoreInternals._delegate &&
-          firestoreInternals._delegate._firestoreClient &&
-          firestoreInternals._delegate._firestoreClient.clientTerminated
-        ) {
-          // Mark client as terminated to prevent new listeners
-          firestoreInternals._delegate._firestoreClient.clientTerminated = true
+        try {
+          // Try to clean up listeners if the internal API is available
+          if (firestoreInternals._delegate && firestoreInternals._delegate._firestoreClient) {
+            // Mark client as terminated to prevent new listeners
+            firestoreInternals._delegate._firestoreClient.clientTerminated = true
+            
+            // Attempt to terminate any existing connections
+            if (typeof firestoreInternals.terminate === "function") {
+              firestoreInternals.terminate().catch(() => {
+                // Ignore errors during termination
+              });
+            }
+          }
+        } catch (cleanupError) {
+          console.error("Error cleaning up Firestore connections:", cleanupError);
         }
 
         // Now sign out

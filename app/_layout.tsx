@@ -9,6 +9,7 @@ import { onAuthStateChanged, type User } from "firebase/auth" // Import User typ
 import { auth, db } from "./firebase/config"
 import { useParticipantRemoval } from "../hooks/use-participant-removal"
 import { collection, query, where, getDocs, onSnapshot, addDoc } from "firebase/firestore"
+import { LocationProvider } from "../contexts/LocationContext" // Import the LocationProvider
 
 // Add more notification types to the context
 export const NotificationContext = createContext<{
@@ -72,6 +73,7 @@ export default function Layout() {
         message,
         timestamp: new Date().toISOString(),
         read: false,
+        seen: false,
         ...additionalData,
       }
 
@@ -97,6 +99,11 @@ export default function Layout() {
     if (!userId) {
       setUnreadCount(0)
       return
+    }
+
+    // Skip fetching if we're in the process of signing out
+    if (isManualSignOut) {
+      return;
     }
 
     try {
@@ -163,8 +170,8 @@ export default function Layout() {
   // Set up real-time listener for notification changes
   useEffect(() => {
     const userId = auth.currentUser?.uid
-    if (!userId) {
-      // If no user, reset unread count to 0
+    if (!userId || isManualSignOut) {
+      // If no user or we're signing out, reset unread count to 0
       setUnreadCount(0)
       return () => {}
     }
@@ -179,13 +186,30 @@ export default function Layout() {
 
       unsubscribeNotifications = onSnapshot(
         notificationsQuery,
-        () => {
-          refreshUnreadCount()
+        (snapshot) => {
+          // Only refresh if user is still logged in
+          if (auth.currentUser && !isManualSignOut) {
+            // Check for added notifications to show real-time updates
+            const newNotifications = snapshot.docChanges()
+              .filter(change => change.type === 'added')
+              .map(change => change.doc.data())
+              
+            // If we have new notifications, log them to console
+            if (newNotifications.length > 0) {
+              console.log(`Received ${newNotifications.length} new notifications`);
+              
+              // Immediately refresh the unread count
+              refreshUnreadCount()
+            }
+          }
         },
         (error) => {
-          // Only log error if user is still logged in
-          if (auth.currentUser) {
-            console.error("Error listening to notifications:", error)
+          // Only log error if user is still logged in and it's not a permissions error
+          if (auth.currentUser && !isManualSignOut) {
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            if (!errorMessage.includes("Missing or insufficient permissions")) {
+              console.error("Error listening to notifications:", error)
+            }
           }
         },
       )
@@ -196,13 +220,26 @@ export default function Layout() {
 
       unsubscribeRemovals = onSnapshot(
         removalsQuery,
-        () => {
-          refreshUnreadCount()
+        (snapshot) => {
+          // Only refresh if user is still logged in
+          if (auth.currentUser && !isManualSignOut) {
+            // Check for new removals
+            const newRemovals = snapshot.docChanges()
+              .filter(change => change.type === 'added' && !change.doc.data().seen)
+              
+            if (newRemovals.length > 0) {
+              console.log(`Received ${newRemovals.length} new participant removals`);
+              refreshUnreadCount()
+            }
+          }
         },
         (error) => {
-          // Only log error if user is still logged in
-          if (auth.currentUser) {
-            console.error("Error listening to removals:", error)
+          // Only log error if user is still logged in and it's not a permissions error
+          if (auth.currentUser && !isManualSignOut) {
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            if (!errorMessage.includes("Missing or insufficient permissions")) {
+              console.error("Error listening to removals:", error)
+            }
           }
         },
       )
@@ -219,7 +256,7 @@ export default function Layout() {
         // Ignore cleanup errors
       }
     }
-  }, [auth.currentUser?.uid])
+  }, [auth.currentUser?.uid, isManualSignOut, refreshUnreadCount])
 
   // Add this new useEffect to handle sign-out cleanup
   useEffect(() => {
@@ -264,21 +301,23 @@ export default function Layout() {
   if (initializing) return null
 
   return (
-    <NotificationContext.Provider value={{ unreadCount, setUnreadCount, refreshUnreadCount, createNotification }}>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="index" />
-        <Stack.Screen name="login" />
-        <Stack.Screen name="signup" />
-        <Stack.Screen name="signup/password" />
-        <Stack.Screen name="home" />
-        <Stack.Screen name="preferences" />
-        <Stack.Screen name="causes" />
-        <Stack.Screen name="frequency" />
-        <Stack.Screen name="location" />
-      </Stack>
+    <LocationProvider>
+      <NotificationContext.Provider value={{ unreadCount, setUnreadCount, refreshUnreadCount, createNotification }}>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="signup" />
+          <Stack.Screen name="signup/password" />
+          <Stack.Screen name="home" />
+          <Stack.Screen name="preferences" />
+          <Stack.Screen name="causes" />
+          <Stack.Screen name="frequency" />
+          <Stack.Screen name="location" />
+        </Stack>
 
-      {/* Removal notification modal - disabled as per new requirements */}
-      {/* <RemovalNotificationModal visible={showNotification} onClose={closeNotification} removalData={removalData} /> */}
-    </NotificationContext.Provider>
+        {/* Removal notification modal - disabled as per new requirements */}
+        {/* <RemovalNotificationModal visible={showNotification} onClose={closeNotification} removalData={removalData} /> */}
+      </NotificationContext.Provider>
+    </LocationProvider>
   )
 }

@@ -9,6 +9,7 @@ import { db } from "../firebase/config"
 import { useFonts } from "expo-font"
 import OpportunityCard, { type Opportunity } from "../../components/opportunity-card"
 import { StyleSheet } from "react-native"
+import { auth } from "../firebase/config"
 
 interface OrganizationOpportunity extends Opportunity {
   isPast?: boolean
@@ -52,6 +53,12 @@ export default function OrganizationScreen() {
     try {
       setLoading(true)
       if (!id) return
+      
+      // Check if user is authenticated before fetching
+      if (!auth.currentUser) {
+        console.log("Skipping organization data fetch - user not authenticated")
+        return
+      }
 
       // Fetch organization details
       const orgDoc = await getDoc(doc(db, "admins", id as string))

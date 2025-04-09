@@ -1,13 +1,13 @@
 "use client"
 import { useState, useEffect } from "react"
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Platform, Alert, Linking } from "react-native"
+import { View, Text, StyleSheet, TouchableOpacity, Platform, Alert, Linking } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { ArrowLeft, MapPin, Check } from "lucide-react-native"
 import { useFonts } from "expo-font"
 import { doc, updateDoc } from "firebase/firestore"
 import { auth, db } from "./firebase/config"
-import * as Location from "expo-location"
+import { useLocationContext } from "../contexts/LocationContext"
 
 // Define the location permission states
 enum LocationState {
@@ -16,18 +16,14 @@ enum LocationState {
   SUCCESS = "success",
 }
 
-// Define the location permission types
-enum LocationPermissionType {
-  FOREGROUND = "foreground",
-  BACKGROUND = "background",
-}
-
 export default function LocationScreen() {
   const router = useRouter()
   const [locationState, setLocationState] = useState<LocationState>(LocationState.INITIAL)
-  const [permissionType, setPermissionType] = useState<LocationPermissionType>(LocationPermissionType.FOREGROUND)
   const [loading, setLoading] = useState(false)
   const [showPermissionModal, setShowPermissionModal] = useState(false)
+
+  // Use the location context
+  const { currentLocation, isLocationEnabled, requestLocationPermission } = useLocationContext()
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -37,77 +33,30 @@ export default function LocationScreen() {
 
   useEffect(() => {
     // Check if location permissions are already granted
-    const checkLocationPermission = async () => {
-      const foreground = await Location.getForegroundPermissionsAsync()
-
-      if (foreground.status === "granted") {
-        // Check for background permissions on Android
-        if (Platform.OS === "android") {
-          const background = await Location.getBackgroundPermissionsAsync()
-
-          // If background permission is also granted, show success
-          if (background.status === "granted") {
-            updateUserLocationPreference(true, true)
-            setLocationState(LocationState.SUCCESS)
-            return
-          }
-        }
-
-        // If only foreground permission is granted
-        updateUserLocationPreference(true, false)
-        setLocationState(LocationState.SUCCESS)
-      }
+    if (isLocationEnabled && currentLocation) {
+      setLocationState(LocationState.SUCCESS)
     }
-
-    checkLocationPermission()
-  }, [])
+  }, [isLocationEnabled, currentLocation])
 
   if (!fontsLoaded) {
     return null // Return null while fonts are loading
   }
 
-  const requestForegroundPermission = async () => {
+  const handleAllowLocation = async () => {
+    setLoading(true)
+
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync()
-
-      if (status === "granted") {
-        setPermissionType(LocationPermissionType.BACKGROUND)
-
-        // On Android, we can request background permission right away
-        if (Platform.OS === "android") {
-          requestBackgroundPermission()
-        } else {
-          // On iOS, we show our custom modal to explain the options
-          setShowPermissionModal(true)
-        }
+      const granted = await requestLocationPermission()
+      if (granted) {
+        setLocationState(LocationState.SUCCESS)
       } else {
         // Permission denied
         handlePermissionDenied()
       }
     } catch (error) {
-      console.error("Error requesting foreground permission:", error)
-      handlePermissionDenied()
-    }
-  }
-
-  const requestBackgroundPermission = async () => {
-    try {
-      const { status } = await Location.requestBackgroundPermissionsAsync()
-
-      if (status === "granted") {
-        // Both permissions granted
-        await updateUserLocationPreference(true, true)
-        setLocationState(LocationState.SUCCESS)
-      } else {
-        // Only foreground permission granted
-        await updateUserLocationPreference(true, false)
-        setLocationState(LocationState.SUCCESS)
-      }
-    } catch (error) {
-      console.error("Error requesting background permission:", error)
-      // Still mark as success with only foreground permission
-      await updateUserLocationPreference(true, false)
-      setLocationState(LocationState.SUCCESS)
+      console.error("Error in location permission flow:", error)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -127,18 +76,6 @@ export default function LocationScreen() {
         "Please enable location permissions to find volunteer opportunities near you.",
         [{ text: "OK" }],
       )
-    }
-  }
-
-  const handleAllowLocation = async () => {
-    setLoading(true)
-
-    try {
-      await requestForegroundPermission()
-    } catch (error) {
-      console.error("Error in location permission flow:", error)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -167,18 +104,6 @@ export default function LocationScreen() {
   const handleFindOpportunities = () => {
     // Navigate to onboarding instead of home
     router.replace("/onboarding" as any)
-  }
-
-  const handleAllowAllTime = async () => {
-    setShowPermissionModal(false)
-    await requestBackgroundPermission()
-  }
-
-  const handleKeepWhileInUse = async () => {
-    setShowPermissionModal(false)
-    // Only use foreground permission
-    await updateUserLocationPreference(true, false)
-    setLocationState(LocationState.SUCCESS)
   }
 
   const renderInitialScreen = () => (
@@ -263,38 +188,8 @@ export default function LocationScreen() {
     </View>
   )
 
-  // Custom permission modal (shown when iOS user needs to choose permission level)
-  const renderPermissionModal = () => (
-    <Modal visible={showPermissionModal} transparent={true} animationType="fade">
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContainer}>
-          <View style={styles.modalIconContainer}>
-            <MapPin size={40} color="#000" />
-          </View>
-
-          <Text style={styles.modalTitle}>Allow Volunteer&Connect to access this device's location all-the-time?</Text>
-
-          <Text style={styles.modalDescription}>App currently can access location only while you're using the app</Text>
-
-          <TouchableOpacity style={styles.modalOption} onPress={handleAllowAllTime}>
-            <Text style={styles.modalOptionText}>Allow all the time</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.modalOption} onPress={handleKeepWhileInUse}>
-            <Text style={styles.modalOptionText}>Keep while-in-use access</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  )
-
   // Render the appropriate screen based on state
-  return (
-    <>
-      {locationState === LocationState.SUCCESS ? renderSuccessScreen() : renderInitialScreen()}
-      {renderPermissionModal()}
-    </>
-  )
+  return <>{locationState === LocationState.SUCCESS ? renderSuccessScreen() : renderInitialScreen()}</>
 }
 
 const styles = StyleSheet.create({
@@ -406,45 +301,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 10,
   },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalContainer: {
-    width: "80%",
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 20,
-    alignItems: "center",
-  },
-  modalIconContainer: {
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 10,
-  },
-  modalDescription: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  modalOption: {
-    width: "100%",
-    paddingVertical: 15,
-    borderTopWidth: 1,
-    borderTopColor: "#eee",
-  },
-  modalOptionText: {
-    fontSize: 16,
-    color: "#0066CC",
-    textAlign: "center",
-  },
 })
-

@@ -1,5 +1,5 @@
 "use client"
-import React, { useState, useEffect, type SetStateAction, useCallback } from "react"
+import { useState, useEffect, type SetStateAction, useCallback } from "react"
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
   SafeAreaView,
   Dimensions,
   TextInput,
+  Linking,
+  Alert,
 } from "react-native"
 import { useRouter, useFocusEffect } from "expo-router"
 import { StatusBar } from "expo-status-bar"
@@ -33,6 +35,8 @@ import CauseCard, { type Cause } from "../components/cause-card"
 import LocationCard, { type Location } from "../components/location-card"
 import NGOFooter from "../components/ngo-footer"
 import OrganizationCard, { type Organization } from "../components/organization-card"
+import { useLocationContext } from "../contexts/LocationContext"
+import React from "react"
 
 // Get screen width for calculating card width
 const screenWidth = Dimensions.get("window").width
@@ -84,6 +88,7 @@ export default function HomeScreen() {
   const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([])
   const [loadingOrganizations, setLoadingOrganizations] = useState(false)
   const [showAllNewOpportunities, setShowAllNewOpportunities] = useState(false)
+  const { currentLocation, isLocationEnabled, requestLocationPermission } = useLocationContext()
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -97,6 +102,13 @@ export default function HomeScreen() {
   const fetchOrganizations = useCallback(async () => {
     try {
       setLoadingOrganizations(true)
+      
+      // Check if user is authenticated before fetching
+      if (!auth.currentUser) {
+        console.log("Skipping organization fetch - user not authenticated")
+        setOrganizations([])
+        return
+      }
 
       // Fetch organizations from the admins collection
       const orgsQuery = query(collection(db, "admins"))
@@ -106,19 +118,33 @@ export default function HomeScreen() {
         orgsSnapshot.docs.map(async (docSnapshot) => {
           const data = docSnapshot.data() as OrgData
 
-          // Count causes for this organization
-          const causesQuery = query(collection(db, "causes"), where("createdBy", "==", docSnapshot.id))
-          const causesSnapshot = await getDocs(causesQuery)
+          try {
+            // Count causes for this organization
+            const causesQuery = query(collection(db, "causes"), where("createdBy", "==", docSnapshot.id))
+            const causesSnapshot = await getDocs(causesQuery)
 
-          return {
-            id: docSnapshot.id,
-            name: data.organizationName || "Unknown Organization",
-            logo: data.photoURL || null,
-            description: data.organizationDescription || "No description available",
-            location: data.location || null,
-            verified: data.verified || false,
-            causesCount: causesSnapshot.docs.length,
-          } as Organization
+            return {
+              id: docSnapshot.id,
+              name: data.organizationName || "Unknown Organization",
+              logo: data.photoURL || null,
+              description: data.organizationDescription || "No description available",
+              location: data.location || null,
+              verified: data.verified || false,
+              causesCount: causesSnapshot.docs.length,
+            } as Organization
+          } catch (innerError) {
+            // If there's an error counting causes, continue with a default count of 0
+            console.log(`Error counting causes for org ${docSnapshot.id}:`, innerError)
+            return {
+              id: docSnapshot.id,
+              name: data.organizationName || "Unknown Organization",
+              logo: data.photoURL || null,
+              description: data.organizationDescription || "No description available",
+              location: data.location || null,
+              verified: data.verified || false,
+              causesCount: 0,
+            } as Organization
+          }
         }),
       )
 
@@ -719,9 +745,10 @@ export default function HomeScreen() {
       } else {
         // Filter organizations based on search query
         const query = searchQuery.toLowerCase().trim()
-        const filtered = organizations.filter(org => 
-          org.name.toLowerCase().includes(query) || 
-          (org.description && org.description.toLowerCase().includes(query))
+        const filtered = organizations.filter(
+          (org) =>
+            org.name.toLowerCase().includes(query) ||
+            (org.description && org.description.toLowerCase().includes(query)),
         )
         setFilteredOrganizations(filtered)
       }
@@ -734,6 +761,17 @@ export default function HomeScreen() {
       setFilteredOrganizations(organizations)
     }
   }, [activeTab, organizations])
+
+  useEffect(() => {
+    // Check if location is enabled and request permission if needed
+    const checkLocationPermission = async () => {
+      if (!isLocationEnabled) {
+        await requestLocationPermission()
+      }
+    }
+
+    checkLocationPermission()
+  }, [isLocationEnabled, requestLocationPermission])
 
   if (!fontsLoaded) {
     return null // Return null while fonts are loading
@@ -756,7 +794,23 @@ export default function HomeScreen() {
   }
 
   // Update the handleUpdateLocation function to navigate to the location screen
-  const handleUpdateLocation = () => {
+  const handleUpdateLocation = async () => {
+    // If location is not enabled, request permission
+    if (!isLocationEnabled) {
+      const granted = await requestLocationPermission()
+      if (!granted) {
+        Alert.alert(
+          "Location Permission Required",
+          "To update your location, please enable location permissions in your device settings.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+          ],
+        )
+        return
+      }
+    }
+
     // Navigate to location selection screen
     router.push("/location" as any)
   }
@@ -996,7 +1050,7 @@ export default function HomeScreen() {
       <View style={styles.searchContainer}>
         <Search size={20} color="#999" style={styles.searchIcon} />
         {activeTab === "causes" ? (
-          <TouchableOpacity style={{flex: 1}} onPress={handleSearch}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={handleSearch}>
             <Text style={styles.searchPlaceholder}>Find Volunteer Opportunities</Text>
           </TouchableOpacity>
         ) : (
@@ -1254,4 +1308,3 @@ const styles = StyleSheet.create({
     color: "#999",
   },
 })
-

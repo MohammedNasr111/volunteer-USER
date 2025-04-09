@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { collection, query, where, onSnapshot, getDocs, doc, getDoc, updateDoc, arrayRemove } from "firebase/firestore"
+import { collection, query, where, onSnapshot, getDocs, doc, getDoc, updateDoc, arrayRemove, addDoc } from "firebase/firestore"
 import { auth, db } from "../app/firebase/config"
 import { ref, set, runTransaction } from "firebase/database"
 import { realtimeDb } from "../app/firebase/config"
@@ -100,6 +100,19 @@ export function useParticipantRemoval() {
               return Math.max(0, (currentCount || 0) - 1)
             })
 
+            // Create a notification in the notifications collection
+            const notificationsRef = collection(db, "notifications")
+            await addDoc(notificationsRef, {
+              userId: userId,
+              title: "Removed from Cause",
+              message: `You have been removed from "${data.causeName}" by ${organizationName || 'the organization'} due to ${data.reason || 'Not specified'}. For more information, contact the organizer.`,
+              type: "removal",
+              timestamp: new Date().toISOString(),
+              seen: false,
+              organizerEmail: email,
+              causeName: data.causeName
+            })
+
             console.log(`User ${userId} removed from cause ${data.causeId} successfully`)
           } catch (error) {
             console.error("Error updating user's registered opportunities:", error)
@@ -176,6 +189,19 @@ export function useParticipantRemoval() {
                     const participantsCountRef = ref(realtimeDb, `causes/${data.causeId}/participantsCount`)
                     await runTransaction(participantsCountRef, (currentCount) => {
                       return Math.max(0, (currentCount || 0) - 1)
+                    })
+
+                    // Create a notification in the notifications collection
+                    const notificationsRef = collection(db, "notifications")
+                    await addDoc(notificationsRef, {
+                      userId: userId,
+                      title: "Removed from Cause",
+                      message: `You have been removed from "${data.causeName}" by ${organizationName || 'the organization'} due to ${data.reason || 'Not specified'}. For more information, contact the organizer.`,
+                      type: "removal",
+                      timestamp: new Date().toISOString(),
+                      seen: false,
+                      organizerEmail: email,
+                      causeName: data.causeName
                     })
 
                     console.log(`User ${userId} removed from cause ${data.causeId} successfully`)

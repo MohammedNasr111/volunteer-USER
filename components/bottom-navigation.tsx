@@ -7,13 +7,31 @@ import { NotificationContext } from "../app/_layout"
 
 interface BottomNavigationProps {
   activeTab: string;
-  notificationCount?: number;
 }
 
 // Update the component to use the global notification context
-export default function BottomNavigation({ activeTab, notificationCount = 0 }: BottomNavigationProps) {
+export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
   const router = useRouter()
-  const { unreadCount } = useContext(NotificationContext)
+  const { unreadCount, setUnreadCount } = useContext(NotificationContext)
+
+  // Function to handle notification tab press
+  const handleNotificationPress = async () => {
+    // Reset count immediately when navigating to notification screen
+    if (activeTab !== "notifications") {
+      try {
+        // Reset the global unread count immediately for visual feedback
+        setUnreadCount(0)
+        
+        // Navigate to notifications screen
+        router.push("/notifications")
+      } catch (error) {
+        console.error("Error in notification press handler:", error)
+      }
+    } else {
+      // If already on notifications screen, do nothing
+      return
+    }
+  }
 
   return (
     <View style={styles.container}>
@@ -35,13 +53,13 @@ export default function BottomNavigation({ activeTab, notificationCount = 0 }: B
 
       <TouchableOpacity
         style={styles.tab}
-        onPress={() => router.push("/notifications")}
+        onPress={handleNotificationPress}
       >
         <View>
           <Bell size={24} color={activeTab === "notifications" ? "#15B2BF" : "#666"} />
-          {notificationCount > 0 && (
+          {unreadCount > 0 && (
             <View style={styles.badge}>
-              <Text style={styles.badgeText}>{notificationCount}</Text>
+              <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
             </View>
           )}
         </View>
@@ -87,13 +105,15 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: -8,
     right: -8,
-    backgroundColor: "#15B2BF",
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
+    backgroundColor: "#FF3B30", // Change to red color for classic look
+    borderRadius: 12, // Make it more circular
+    minWidth: 20,
+    height: 20,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 4,
+    borderWidth: 1,
+    borderColor: "#fff" // Add white border for contrast
   },
   badgeText: {
     color: "#fff",

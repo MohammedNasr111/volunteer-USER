@@ -12,10 +12,11 @@ import {
   SafeAreaView,
   Image,
   Modal,
+  Alert,
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { Search, ArrowLeft, ChevronDown, X, Check, Heart } from "lucide-react-native"
+import { Search, ArrowLeft, ChevronDown, X, Check, Heart, MapPin, RefreshCw } from "lucide-react-native"
 import {
   collection,
   query,
@@ -34,7 +35,8 @@ import { useFonts } from "expo-font"
 import type { Opportunity } from "../components/opportunity-card"
 import { ref, get } from "firebase/database"
 import { realtimeDb } from "./firebase/config"
-import React from "react"
+import { useLocationContext } from "../contexts/LocationContext"
+import { Linking } from "react-native"
 
 // Define the filter options
 const filterOptions = [
@@ -47,10 +49,10 @@ const filterOptions = [
 
 // Define distance options for location filter
 const distanceOptions = [
-  { id: "5km", label: "5 km" },
-  { id: "10km", label: "10 km" },
-  { id: "15km", label: "15 km" },
-  { id: "20km", label: "20 km+" },
+  { id: "5", label: "5 km" },
+  { id: "10", label: "10 km" },
+  { id: "15", label: "15 km" },
+  { id: "20", label: "20 km+" },
 ]
 
 // Define cause types
@@ -89,6 +91,17 @@ export default function DiscoverScreen() {
   const [selectedDistance, setSelectedDistance] = useState("")
   const [selectedCauses, setSelectedCauses] = useState<string[]>([])
   const [sortOption, setSortOption] = useState("newest")
+  const [refreshingLocation, setRefreshingLocation] = useState(false)
+
+  // Get location context
+  const {
+    currentLocation,
+    isLocationEnabled,
+    requestLocationPermission,
+    calculateDistanceFromUser,
+    filterByDistance,
+    refreshLocation,
+  } = useLocationContext()
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -204,6 +217,12 @@ export default function DiscoverScreen() {
             console.error("Error fetching participant count:", error)
           }
 
+          // Calculate distance from user if location is available
+          let distanceFromUser = null
+          if (currentLocation && data.location?.coordinates?.lat && data.location?.coordinates?.lng) {
+            distanceFromUser = calculateDistanceFromUser(data.location.coordinates.lat, data.location.coordinates.lng)
+          }
+
           return {
             id: docSnapshot.id,
             name: data.name || "",
@@ -219,6 +238,7 @@ export default function DiscoverScreen() {
             registeredCount: participantsCount,
             causeTypes: data.causeTypes || [],
             location: data.location || null,
+            distanceFromUser: distanceFromUser,
           }
         }),
       )
@@ -230,7 +250,7 @@ export default function DiscoverScreen() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [currentLocation, calculateDistanceFromUser])
 
   // Initial data loading
   useEffect(() => {
@@ -293,23 +313,33 @@ export default function DiscoverScreen() {
       filtered = filtered.filter((opp) => {
         if (!opp.causeTypes || opp.causeTypes.length === 0) return false
         return selectedCauses.some((cause) =>
-          opp.causeTypes.map((c: string) => c.toLowerCase()).includes(cause.toLowerCase()),
+          (opp.causeTypes || []).map((c: string) => c.toLowerCase()).includes(cause.toLowerCase()),
         )
       })
     }
 
-    // Apply distance filter (simplified - would need actual geolocation in a real app)
-    if (selectedDistance) {
-      // This is a simplified version - in a real app, you would calculate actual distances
-      // based on user's current location and the event location coordinates
-      const distanceKm = Number.parseInt(selectedDistance.replace("km", ""))
+    // Apply distance filter
+    if (selectedDistance && currentLocation) {
+      const maxDistance = selectedDistance === "20" ? 1000 : Number.parseInt(selectedDistance) // If 20km+, use a large value
 
-      // For demo purposes, we'll just filter randomly based on the distance
-      if (distanceKm < 20) {
-        // Filter out some percentage of opportunities based on distance
-        const filterPercentage = distanceKm / 20 // e.g., 5km = 25% kept, 15km = 75% kept
-        filtered = filtered.filter(() => Math.random() < filterPercentage)
-      }
+      filtered = filtered.filter((opp) => {
+        // Skip causes without location data
+        if (!opp.location?.coordinates?.lat || !opp.location?.coordinates?.lng) {
+          return false
+        }
+
+        // Calculate distance if not already calculated
+        let distance = opp.distanceFromUser
+        if (distance === null || distance === undefined) {
+          distance = calculateDistanceFromUser(opp.location.coordinates.lat, opp.location.coordinates.lng)
+        }
+
+        // If distance couldn't be calculated, exclude the cause
+        if (distance === null) return false
+
+        // Include the cause if it's within the selected distance
+        return distance <= maxDistance
+      })
     }
 
     // Apply sort
@@ -323,10 +353,32 @@ export default function DiscoverScreen() {
         if (!a.date || !b.date) return 0
         return new Date(a.date).getTime() - new Date(b.date).getTime()
       })
+    } else if (sortOption === "distance" && currentLocation) {
+      // Sort by distance from user
+      filtered.sort((a, b) => {
+        const distA =
+          a.distanceFromUser !== null && a.distanceFromUser !== undefined
+            ? a.distanceFromUser
+            : Number.POSITIVE_INFINITY
+        const distB =
+          b.distanceFromUser !== null && b.distanceFromUser !== undefined
+            ? b.distanceFromUser
+            : Number.POSITIVE_INFINITY
+        return distA - distB
+      })
     }
 
     setFilteredOpportunities(filtered)
-  }, [opportunities, searchQuery, activeFilter, selectedDistance, selectedCauses, sortOption])
+  }, [
+    opportunities,
+    searchQuery,
+    activeFilter,
+    selectedDistance,
+    selectedCauses,
+    sortOption,
+    currentLocation,
+    calculateDistanceFromUser,
+  ])
 
   if (!fontsLoaded) {
     return null // Return null while fonts are loading
@@ -344,7 +396,23 @@ export default function DiscoverScreen() {
     router.push(`/opportunity/${opportunityId}` as any)
   }
 
-  const toggleLocationFilter = () => {
+  const toggleLocationFilter = async () => {
+    // If location is not enabled, request permission first
+    if (!isLocationEnabled) {
+      const granted = await requestLocationPermission()
+      if (!granted) {
+        Alert.alert(
+          "Location Permission Required",
+          "To filter causes by distance, please enable location permissions.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+          ],
+        )
+        return
+      }
+    }
+
     setShowLocationFilter(!showLocationFilter)
     setShowSortFilter(false)
     setShowCausesFilter(false)
@@ -397,6 +465,19 @@ export default function DiscoverScreen() {
     setSearchQuery("")
   }
 
+  const handleRefreshLocation = async () => {
+    setRefreshingLocation(true)
+    try {
+      await refreshLocation()
+      // After location is refreshed, refetch opportunities to update distances
+      await fetchOpportunities()
+    } catch (error) {
+      console.error("Error refreshing location:", error)
+    } finally {
+      setRefreshingLocation(false)
+    }
+  }
+
   // Custom opportunity card for search results
   const renderSearchResultItem = ({ item }: { item: Opportunity }) => {
     // Format date (e.g., "Tuesday, August 19")
@@ -420,6 +501,12 @@ export default function DiscoverScreen() {
     // Check if cause is saved
     const isSaved = savedCauses.includes(item.id)
 
+    // Display distance if available
+    const distanceText =
+      item.distanceFromUser !== null && item.distanceFromUser !== undefined
+        ? `${item.distanceFromUser.toFixed(1)} km away`
+        : ""
+
     return (
       <View style={styles.resultCard}>
         <View style={styles.resultContent}>
@@ -437,7 +524,16 @@ export default function DiscoverScreen() {
           <Text style={styles.dateText}>{formatDate(item.date)}</Text>
           <Text style={styles.timeText}>{formatTime(item.time)}</Text>
 
-          <Text style={styles.spotsText}>{spotsText}</Text>
+          <View style={styles.detailsRow}>
+            <Text style={styles.spotsText}>{spotsText}</Text>
+
+            {distanceText && (
+              <View style={styles.distanceContainer}>
+                <MapPin size={12} color="#15B2BF" />
+                <Text style={styles.distanceText}>{distanceText}</Text>
+              </View>
+            )}
+          </View>
         </View>
 
         <Image
@@ -465,7 +561,9 @@ export default function DiscoverScreen() {
           <ArrowLeft size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Searching Causes</Text>
-        <View style={styles.backButtonPlaceholder} />
+        <TouchableOpacity style={styles.refreshButton} onPress={handleRefreshLocation} disabled={refreshingLocation}>
+          <RefreshCw size={22} color="#15B2BF" style={refreshingLocation ? styles.refreshingIcon : {}} />
+        </TouchableOpacity>
       </View>
 
       {/* Search bar */}
@@ -491,13 +589,17 @@ export default function DiscoverScreen() {
           onPress={toggleLocationFilter}
         >
           <Text style={[styles.filterButtonText, selectedDistance ? styles.activeFilterText : {}]}>
-            Location {selectedDistance ? `(${selectedDistance})` : ""}
+            Location {selectedDistance ? `(${selectedDistance} km)` : ""}
           </Text>
           <ChevronDown size={16} color={selectedDistance ? "#15B2BF" : "#666"} />
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.filterButton, sortOption !== "newest" ? styles.activeFilterButton : {}]}
+          style={[
+            styles.filterButton,
+            sortOption !== "newest" ? styles.activeFilterButton : {},
+            { paddingHorizontal: 10 }, // Reduce horizontal padding specifically for Sort button
+          ]}
           onPress={toggleSortFilter}
         >
           <Text style={[styles.filterButtonText, sortOption !== "newest" ? styles.activeFilterText : {}]}>Sort</Text>
@@ -568,6 +670,15 @@ export default function DiscoverScreen() {
                 Oldest First
               </Text>
               {sortOption === "oldest" && <Check size={18} color="#15B2BF" />}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterOption, sortOption === "distance" ? styles.selectedFilterOption : {}]}
+              onPress={() => handleSelectSort("distance")}
+            >
+              <Text style={[styles.filterOptionText, sortOption === "distance" ? styles.selectedFilterOptionText : {}]}>
+                Distance (Nearest First)
+              </Text>
+              {sortOption === "distance" && <Check size={18} color="#15B2BF" />}
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -662,8 +773,15 @@ const styles = StyleSheet.create({
   backButton: {
     width: 40,
   },
-  backButtonPlaceholder: {
+  refreshButton: {
     width: 40,
+    height: 40,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  refreshingIcon: {
+    opacity: 0.5,
+    transform: [{ rotate: "45deg" }],
   },
   headerTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
@@ -698,7 +816,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     paddingHorizontal: 20,
     paddingVertical: 10,
-    justifyContent: "space-between",
+    justifyContent: "center",
+    gap: 8, // Small gap between buttons
   },
   filterButton: {
     flexDirection: "row",
@@ -709,6 +828,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#ddd",
     backgroundColor: "#fff",
+    // Add drop shadow
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3, // For Android shadow
+    // Remove minWidth to let buttons size naturally based on content
   },
   activeFilterButton: {
     borderColor: "#15B2BF",
@@ -871,40 +997,48 @@ const styles = StyleSheet.create({
   dateText: {
     fontSize: 12,
     color: "#333",
-    marginBottom: 2,
   },
   timeText: {
     fontSize: 12,
-    color: "#333",
-    marginBottom: 8,
+    color: "#666",
+  },
+  detailsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 5,
   },
   spotsText: {
     fontSize: 12,
     color: "#15B2BF",
-    fontWeight: "500",
+  },
+  distanceContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  distanceText: {
+    fontSize: 12,
+    color: "#15B2BF",
+    marginLeft: 3,
   },
   resultImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
+    width: 80,
+    height: 80,
+    borderRadius: 10,
+    marginLeft: 10,
   },
   heartButton: {
     position: "absolute",
-    bottom: 15,
-    right: 15,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#f5f5f5",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 1.5,
-    elevation: 2,
+    top: 10,
+    right: 10,
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.8)",
   },
   heartButtonActive: {
-    backgroundColor: "#FF4081",
+    backgroundColor: "rgba(240, 100, 150, 0.8)",
+  },
+  disabledButton: {
+    backgroundColor: "#ddd",
   },
 })

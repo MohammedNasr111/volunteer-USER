@@ -1,5 +1,4 @@
 "use client"
-import React from 'react'
 import { useState, useEffect, useCallback } from "react"
 import {
   View,
@@ -915,7 +914,7 @@ function OpportunityDetailScreen() {
   }
 
   const handleShare = () => {
-    if (!opportunity) return;
+    if (!opportunity) return
 
     const causeDetails = {
       id: opportunity.id,
@@ -926,23 +925,23 @@ function OpportunityDetailScreen() {
       city: opportunity.city,
       description: opportunity.description,
       maxParticipants: opportunity.maxParticipants,
-      registeredCount: opportunity.registeredCount
-    };
-
-    const opportunityDate = new Date(opportunity.date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    let causeType: 'new' | 'upcoming' | 'past';
-    if (opportunityDate < today) {
-      causeType = 'past';
-    } else if (opportunity.registeredCount === 0) {
-      causeType = 'new';
-    } else {
-      causeType = 'upcoming';
+      registeredCount: opportunity.registeredCount,
     }
 
-    shareUtils.shareCauseViaEmail(causeDetails, causeType);
+    const opportunityDate = new Date(opportunity.date)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    let causeType: "new" | "upcoming" | "past"
+    if (opportunityDate < today) {
+      causeType = "past"
+    } else if (opportunity.registeredCount === 0) {
+      causeType = "new"
+    } else {
+      causeType = "upcoming"
+    }
+
+    shareUtils.shareCauseViaEmail(causeDetails, causeType)
   }
 
   const handleContactEmail = () => {
@@ -1131,16 +1130,14 @@ function OpportunityDetailScreen() {
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
                 <Text style={styles.joinButtonText}>
-                  {isRegistered
-                    ? "Cancel Registration"
-                    : sameDayConflict.exists && new Date(opportunity.date) < new Date()
-                      ? "Cause Already Past"
-                    : sameDayConflict.exists
-                      ? "Already Registered"
-                      : isFull && !isRegistered
-                        ? "Cause Full"
-                        : new Date(opportunity.date) < new Date()
-                          ? "Cause Already Past"
+                  {new Date(opportunity.date) < new Date()
+                    ? "Cause Already Past"
+                    : isRegistered
+                      ? "Cancel Registration"
+                      : sameDayConflict.exists
+                        ? "Already Registered"
+                        : isFull && !isRegistered
+                          ? "Cause Full"
                           : "Join & Sign Up"}
                 </Text>
               )}
@@ -1401,16 +1398,14 @@ function OpportunityDetailScreen() {
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
                 <Text style={styles.joinButtonText}>
-                  {isRegistered
-                    ? "Cancel Registration"
-                    : sameDayConflict.exists && new Date(opportunity.date) < new Date()
-                      ? "Cause Already Past"
-                    : sameDayConflict.exists
-                      ? "Already Registered"
-                      : isFull && !isRegistered
-                        ? "Cause Full"
-                        : new Date(opportunity.date) < new Date()
-                          ? "Cause Already Past"
+                  {new Date(opportunity.date) < new Date()
+                    ? "Cause Already Past"
+                    : isRegistered
+                      ? "Cancel Registration"
+                      : sameDayConflict.exists
+                        ? "Already Registered"
+                        : isFull && !isRegistered
+                          ? "Cause Full"
                           : "Join & Sign Up"}
                 </Text>
               )}
@@ -1899,4 +1894,3 @@ const styles = StyleSheet.create({
 })
 
 export default OpportunityDetailScreen
-
