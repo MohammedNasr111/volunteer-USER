@@ -5,48 +5,56 @@ import { Home, Clock, Bell, User } from "lucide-react-native"
 import { useContext } from "react"
 import { NotificationContext } from "../app/_layout"
 
-type BottomNavigationProps = {
-  activeTab: "home" | "history" | "notifications" | "profile"
-  notificationCount?: number
+interface BottomNavigationProps {
+  activeTab: string;
+  notificationCount?: number;
 }
 
 // Update the component to use the global notification context
-export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
+export default function BottomNavigation({ activeTab, notificationCount = 0 }: BottomNavigationProps) {
   const router = useRouter()
   const { unreadCount } = useContext(NotificationContext)
 
-  // Use a more direct approach to navigation to avoid TypeScript issues
-  const navigateToHome = () => router.push("/home" as any)
-  const navigateToHistory = () => router.push("/history" as any)
-  const navigateToNotifications = () => router.push("/notifications" as any)
-  const navigateToProfile = () => router.push("/profile" as any)
-
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={styles.tabItem} onPress={navigateToHome} activeOpacity={0.7}>
-        <Home size={22} color={activeTab === "home" ? "#15B2BF" : "#666"} />
+      <TouchableOpacity
+        style={styles.tab}
+        onPress={() => router.push("/")}
+      >
+        <Home size={24} color={activeTab === "home" ? "#15B2BF" : "#666"} />
         <Text style={[styles.tabText, activeTab === "home" && styles.activeTabText]}>Home</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.tabItem} onPress={navigateToHistory} activeOpacity={0.7}>
-        <Clock size={22} color={activeTab === "history" ? "#15B2BF" : "#666"} />
+      <TouchableOpacity
+        style={styles.tab}
+        onPress={() => router.push("/history")}
+      >
+        <Clock size={24} color={activeTab === "history" ? "#15B2BF" : "#666"} />
         <Text style={[styles.tabText, activeTab === "history" && styles.activeTabText]}>History</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.tabItem} onPress={navigateToNotifications} activeOpacity={0.7}>
-        <View style={styles.notificationIconContainer}>
-          <Bell size={22} color={activeTab === "notifications" ? "#15B2BF" : "#666"} />
-          {unreadCount > 0 && (
-            <View style={styles.badgeContainer}>
-              <Text style={styles.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+      <TouchableOpacity
+        style={styles.tab}
+        onPress={() => router.push("/notifications")}
+      >
+        <View>
+          <Bell size={24} color={activeTab === "notifications" ? "#15B2BF" : "#666"} />
+          {notificationCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{notificationCount}</Text>
             </View>
           )}
         </View>
-        <Text style={[styles.tabText, activeTab === "notifications" && styles.activeTabText]}>Notifications</Text>
+        <Text style={[styles.tabText, activeTab === "notifications" && styles.activeTabText]}>
+          Notifications
+        </Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.tabItem} onPress={navigateToProfile} activeOpacity={0.7}>
-        <User size={22} color={activeTab === "profile" ? "#15B2BF" : "#666"} />
+      <TouchableOpacity
+        style={styles.tab}
+        onPress={() => router.push("/profile")}
+      >
+        <User size={24} color={activeTab === "profile" ? "#15B2BF" : "#666"} />
         <Text style={[styles.tabText, activeTab === "profile" && styles.activeTabText]}>Profile</Text>
       </TouchableOpacity>
     </View>
@@ -56,53 +64,39 @@ export default function BottomNavigation({ activeTab }: BottomNavigationProps) {
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
-    height: 70,
+    justifyContent: "space-around",
+    alignItems: "center",
     backgroundColor: "#fff",
+    paddingVertical: 10,
     borderTopWidth: 1,
     borderTopColor: "#eee",
-    paddingBottom: 10,
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    elevation: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
   },
-  tabItem: {
-    flex: 1,
-    justifyContent: "center",
+  tab: {
     alignItems: "center",
-    paddingTop: 10,
+    justifyContent: "center",
   },
   tabText: {
     fontSize: 12,
-    marginTop: 4,
     color: "#666",
+    marginTop: 4,
   },
   activeTabText: {
     color: "#15B2BF",
-    fontWeight: "500",
   },
-  notificationIconContainer: {
-    position: "relative",
-  },
-  badgeContainer: {
+  badge: {
     position: "absolute",
-    top: -5,
-    right: -10,
-    backgroundColor: "#FF4757",
+    top: -8,
+    right: -8,
+    backgroundColor: "#15B2BF",
     borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    minWidth: 18,
+    height: 18,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 4,
   },
   badgeText: {
-    color: "white",
+    color: "#fff",
     fontSize: 10,
     fontWeight: "bold",
   },

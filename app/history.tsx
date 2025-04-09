@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import {
   View,
   Text,
@@ -13,19 +13,39 @@ import {
   ScrollView,
   Alert,
   FlatList,
+  ViewStyle,
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, addDoc, serverTimestamp } from "firebase/firestore"
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, addDoc, serverTimestamp, arrayUnion, arrayRemove } from "firebase/firestore"
 import { ref, onValue } from "firebase/database"
 import { auth, db, realtimeDb } from "./firebase/config"
 import { useFonts } from "expo-font"
 import BottomNavigation from "../components/bottom-navigation"
-import { ArrowLeft, Star, Clock, Share2, Bookmark, X } from "lucide-react-native"
+import { Star, Clock, Share2, Bookmark, X } from "lucide-react-native"
 
 // Tab options
 type TabType = "upcoming" | "past" | "saved"
 type FilterType = "cause" | "organization"
+
+// Add these interfaces at the top of the file
+interface UserData {
+  displayName?: string;
+  photoURL?: string | null;
+  firstName?: string;
+  lastName?: string;
+}
+
+interface RatingData {
+  userId: string;
+  rating: number;
+  feedback?: string;
+  firstName?: string;
+  lastName?: string;
+  userPhotoURL?: string | null;
+  createdAt?: Date;
+  updatedAt: Date;
+}
 
 export default function HistoryScreen() {
   const router = useRouter()
@@ -50,6 +70,10 @@ export default function HistoryScreen() {
   const [showParticipantsModal, setShowParticipantsModal] = useState(false)
   const [selectedParticipants, setSelectedParticipants] = useState<any[]>([])
   const [selectedOpportunityName, setSelectedOpportunityName] = useState("")
+  const [isEditing, setIsEditing] = useState(false)
+  const [ratingSnapshot, setRatingSnapshot] = useState<any>(null)
+  const [showFeedbackDetails, setShowFeedbackDetails] = useState(false)
+  const [selectedFeedbacks, setSelectedFeedbacks] = useState<any[]>([])
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -245,207 +269,188 @@ export default function HistoryScreen() {
     }
   }
 
-  // Fetch opportunities
-  useEffect(() => {
-    const fetchOpportunities = async () => {
-      try {
-        setLoading(true)
-        const userId = auth.currentUser?.uid
+  // Add fetchOpportunities function
+  const fetchOpportunities = async () => {
+    try {
+      setLoading(true)
+      const userId = auth.currentUser?.uid
 
-        if (!userId) {
-          router.replace("/login")
-          return
-        }
-
-        // Get user's registered opportunities
-        const userDoc = await getDoc(doc(db, "users", userId))
-        if (userDoc.exists()) {
-          const userData = userDoc.data()
-          const registeredOpportunityIds = userData.registered_opportunities || []
-          const savedOpportunityIds = userData.saved_opportunities || []
-          const now = new Date()
-
-          // Fetch registered opportunities
-          if (registeredOpportunityIds.length > 0) {
-            const pastOppsList: any[] = []
-            const upcomingOppsList: any[] = []
-
-            // Fetch each opportunity
-            const opportunitiesPromises = registeredOpportunityIds.map(async (oppId: string) => {
-              const oppDoc = await getDoc(doc(db, "causes", oppId))
-              if (oppDoc.exists()) {
-                const oppData = oppDoc.data()
-                const oppDate = new Date(oppData.date)
-
-                // Get organization data
-                let organizationName = oppData.organizationName || ""
-                let organizationLogo = oppData.organizationLogo || ""
-
-                if (oppData.createdBy) {
-                  try {
-                    const orgDoc = await getDoc(doc(db, "admins", oppData.createdBy))
-                    if (orgDoc.exists()) {
-                      const orgData = orgDoc.data()
-                      organizationName = orgData.organizationName || organizationName
-                      organizationLogo = orgData.photoURL || organizationLogo
-                    }
-                  } catch (error) {
-                    console.error("Error fetching organization data:", error)
-                  }
-                }
-
-                // Get ratings and feedback
-                const ratingsRef = collection(db, "ratings")
-                const q = query(ratingsRef, where("causeId", "==", oppId))
-                const ratingsSnapshot = await getDocs(q)
-
-                let totalRating = 0
-                let ratingCount = 0
-                let userHasRated = false
-                let userRating = 0
-                const raters: any[] = []
-
-                ratingsSnapshot.forEach((doc) => {
-                  const ratingData = doc.data()
-                  totalRating += ratingData.rating
-                  ratingCount++
-
-                  if (ratingData.userId === userId) {
-                    userHasRated = true
-                    userRating = ratingData.rating
-                  }
-
-                  // Add rater info
-                  if (ratingData.userPhotoURL) {
-                    raters.push({
-                      id: ratingData.userId,
-                      photoURL: ratingData.userPhotoURL,
-                    })
-                  }
-                })
-
-                const avgRating = ratingCount > 0 ? (totalRating / ratingCount).toFixed(1) : "0.0"
-
-                const opportunity = {
-                  id: oppDoc.id,
-                  name: oppData.name || "",
-                  imageUrl: oppData.imageUrl || "",
-                  date: oppData.date || "",
-                  time: oppData.time || "",
-                  city: oppData.city || "",
-                  volunteers: oppData.volunteers || "0",
-                  organizationName,
-                  organizationLogo,
-                  createdBy: oppData.createdBy || "",
-                  description: oppData.description || "",
-                  registeredCount: oppData.registeredCount || 0,
-                  avgRating,
-                  ratingCount,
-                  userHasRated,
-                  userRating,
-                  raters: raters.slice(0, 5), // Limit to 5 raters
-                }
-
-                // Sort into past or upcoming
-                if (oppDate < now) {
-                  pastOppsList.push(opportunity)
-                } else {
-                  upcomingOppsList.push(opportunity)
-                }
-
-                return opportunity
-              }
-              return null
-            })
-
-            await Promise.all(opportunitiesPromises)
-
-            // Sort by date (most recent first for past, soonest first for upcoming)
-            pastOppsList.sort((a, b) => {
-              if (!a.date) return 1
-              if (!b.date) return -1
-              return new Date(b.date).getTime() - new Date(a.date).getTime()
-            })
-
-            upcomingOppsList.sort((a, b) => {
-              if (!a.date) return 1
-              if (!b.date) return -1
-              return new Date(a.date).getTime() - new Date(b.date).getTime()
-            })
-
-            setPastOpportunities(pastOppsList)
-            setUpcomingOpportunities(upcomingOppsList)
-
-            // Calculate total hours from past opportunities
-            calculateTotalHours(pastOppsList)
-          }
-
-          // Fetch saved opportunities
-          if (savedOpportunityIds.length > 0) {
-            const savedOppsList: any[] = []
-
-            const savedOpportunitiesPromises = savedOpportunityIds.map(async (oppId: string) => {
-              const oppDoc = await getDoc(doc(db, "causes", oppId))
-              if (oppDoc.exists()) {
-                const oppData = oppDoc.data()
-
-                // Get organization data
-                let organizationName = oppData.organizationName || ""
-                let organizationLogo = oppData.organizationLogo || ""
-
-                if (oppData.createdBy) {
-                  try {
-                    const orgDoc = await getDoc(doc(db, "admins", oppData.createdBy))
-                    if (orgDoc.exists()) {
-                      const orgData = orgDoc.data()
-                      organizationName = orgData.organizationName || organizationName
-                      organizationLogo = orgData.photoURL || organizationLogo
-                    }
-                  } catch (error) {
-                    console.error("Error fetching organization data:", error)
-                  }
-                }
-
-                const opportunity = {
-                  id: oppDoc.id,
-                  name: oppData.name || "",
-                  imageUrl: oppData.imageUrl || "",
-                  date: oppData.date || "",
-                  time: oppData.time || "",
-                  city: oppData.city || "",
-                  volunteers: oppData.volunteers || "0",
-                  organizationName,
-                  organizationLogo,
-                  createdBy: oppData.createdBy || "",
-                  description: oppData.description || "",
-                  registeredCount: oppData.registeredCount || 0,
-                }
-
-                savedOppsList.push(opportunity)
-                return opportunity
-              }
-              return null
-            })
-
-            await Promise.all(savedOpportunitiesPromises)
-
-            // Sort by date (soonest first)
-            savedOppsList.sort((a, b) => {
-              if (!a.date) return 1
-              if (!b.date) return -1
-              return new Date(a.date).getTime() - new Date(b.date).getTime()
-            })
-
-            setSavedOpportunities(savedOppsList)
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching opportunities:", error)
-      } finally {
-        setLoading(false)
+      if (!userId) {
+        router.replace("/login")
+        return
       }
-    }
 
+      // Get user's registered opportunities
+      const userDoc = await getDoc(doc(db, "users", userId))
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        const registeredOpportunityIds = userData.registered_opportunities || []
+        const savedOpportunityIds = userData.saved_opportunities || []
+        const now = new Date()
+
+        // Fetch registered opportunities
+        if (registeredOpportunityIds.length > 0) {
+          const pastOppsList: any[] = []
+          const upcomingOppsList: any[] = []
+
+          // Fetch each opportunity with ratings and raters
+          const opportunitiesPromises = registeredOpportunityIds.map(async (oppId: string) => {
+            const oppDoc = await getDoc(doc(db, "causes", oppId))
+            if (oppDoc.exists()) {
+              const oppData = oppDoc.data()
+              const oppDate = new Date(oppData.date)
+
+              // Get organization data
+              let organizationName = oppData.organizationName || ""
+              let organizationLogo = oppData.organizationLogo || ""
+
+              if (oppData.createdBy) {
+                try {
+                  const orgDoc = await getDoc(doc(db, "admins", oppData.createdBy))
+                  if (orgDoc.exists()) {
+                    const orgData = orgDoc.data()
+                    organizationName = orgData.organizationName || organizationName
+                    organizationLogo = orgData.photoURL || organizationLogo
+                  }
+                } catch (error) {
+                  console.error("Error fetching organization data:", error)
+                }
+              }
+
+              // Fetch ratings and raters for this opportunity
+              const ratingsRef = collection(db, "ratings");
+              const ratingsQuery = query(ratingsRef, where("causeId", "==", oppId));
+              const ratingsSnapshot = await getDocs(ratingsQuery);
+              
+              let totalRating = 0;
+              let ratingCount = 0;
+              let userHasRated = false;
+              const raters: any[] = [];
+
+              ratingsSnapshot.forEach((doc) => {
+                const data = doc.data();
+                if (data.rating) {
+                  totalRating += data.rating;
+                  ratingCount++;
+                  raters.push({
+                    userId: data.userId,
+                    userName: data.userName,
+                    userPhotoURL: data.userPhotoURL,
+                    rating: data.rating,
+                    feedback: data.feedback
+                  });
+                }
+                if (data.userId === userId) {
+                  userHasRated = true;
+                }
+              });
+
+              const avgRating = ratingCount > 0 ? (totalRating / ratingCount).toFixed(1) : "0.0";
+
+              const opportunity = {
+                id: oppDoc.id,
+                name: oppData.name || "",
+                imageUrl: oppData.imageUrl || "",
+                date: oppData.date || "",
+                time: oppData.time || "",
+                city: oppData.city || "",
+                volunteers: oppData.volunteers || "0",
+                organizationName,
+                organizationLogo,
+                createdBy: oppData.createdBy || "",
+                description: oppData.description || "",
+                registeredCount: oppData.registeredCount || 0,
+                avgRating,
+                userHasRated,
+                raters
+              }
+
+              // Sort into past or upcoming
+              if (oppDate < now) {
+                pastOppsList.push(opportunity)
+              } else {
+                upcomingOppsList.push(opportunity)
+              }
+
+              return opportunity
+            }
+            return null
+          })
+
+          await Promise.all(opportunitiesPromises)
+
+          // Sort by date
+          pastOppsList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+          upcomingOppsList.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+          setPastOpportunities(pastOppsList)
+          setUpcomingOpportunities(upcomingOppsList)
+          calculateTotalHours(pastOppsList)
+        }
+
+        // Fetch saved opportunities
+        if (savedOpportunityIds.length > 0) {
+          const savedOppsList: any[] = []
+
+          const savedOpportunitiesPromises = savedOpportunityIds.map(async (oppId: string) => {
+            const oppDoc = await getDoc(doc(db, "causes", oppId))
+            if (oppDoc.exists()) {
+              const oppData = oppDoc.data()
+
+              // Get organization data
+              let organizationName = oppData.organizationName || ""
+              let organizationLogo = oppData.organizationLogo || ""
+
+              if (oppData.createdBy) {
+                try {
+                  const orgDoc = await getDoc(doc(db, "admins", oppData.createdBy))
+                  if (orgDoc.exists()) {
+                    const orgData = orgDoc.data()
+                    organizationName = orgData.organizationName || organizationName
+                    organizationLogo = orgData.photoURL || organizationLogo
+                  }
+                } catch (error) {
+                  console.error("Error fetching organization data:", error)
+                }
+              }
+
+              const opportunity = {
+                id: oppDoc.id,
+                name: oppData.name || "",
+                imageUrl: oppData.imageUrl || "",
+                date: oppData.date || "",
+                time: oppData.time || "",
+                city: oppData.city || "",
+                volunteers: oppData.volunteers || "0",
+                organizationName,
+                organizationLogo,
+                createdBy: oppData.createdBy || "",
+                description: oppData.description || "",
+                registeredCount: oppData.registeredCount || 0,
+              }
+
+              savedOppsList.push(opportunity)
+              return opportunity
+            }
+            return null
+          })
+
+          await Promise.all(savedOpportunitiesPromises)
+
+          // Sort by date
+          savedOppsList.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+          setSavedOpportunities(savedOppsList)
+        }
+      }
+    } catch (error) {
+      console.error("Error fetching opportunities:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Update useEffect to use the fetchOpportunities function
+  useEffect(() => {
     fetchOpportunities()
   }, [router])
 
@@ -460,113 +465,158 @@ export default function HistoryScreen() {
   }
 
   // Handle provide feedback
-  const handleProvideFeedback = (opportunity: any) => {
-    setSelectedOpportunity(opportunity)
-    setUserRating(opportunity.userRating || 0)
-    setFeedbackText("")
-    setFeedbackModalVisible(true)
-
-    // Focus the input after a short delay to ensure the modal is visible
-    setTimeout(() => {
-      if (feedbackInputRef.current) {
-        feedbackInputRef.current.focus()
-      }
-    }, 300)
-  }
-
-  // Submit feedback
-  const submitFeedback = async () => {
-    if (!selectedOpportunity || !auth.currentUser) return
-
+  const handleFeedback = async (opportunity: any) => {
     try {
-      // Add or update rating
-      const ratingsRef = collection(db, "ratings")
-      const q = query(
-        ratingsRef,
-        where("causeId", "==", selectedOpportunity.id),
-        where("userId", "==", auth.currentUser.uid),
-      )
-
-      const querySnapshot = await getDocs(q)
-      let ratingDocId = ""
-
-      if (querySnapshot.empty) {
-        // Create new rating
-        const newRatingRef = await addDoc(collection(db, "ratings"), {
-          causeId: selectedOpportunity.id,
-          userId: auth.currentUser.uid,
-          userName: userProfile?.name || auth.currentUser.displayName || "Anonymous",
-          userPhotoURL: userProfile?.photoURL || auth.currentUser.photoURL,
-          rating: userRating,
-          feedback: feedbackText,
-          createdAt: serverTimestamp(),
-        })
-        ratingDocId = newRatingRef.id
-      } else {
-        // Update existing rating
-        const ratingDoc = querySnapshot.docs[0]
-        ratingDocId = ratingDoc.id
-        await updateDoc(doc(db, "ratings", ratingDoc.id), {
-          rating: userRating,
-          feedback: feedbackText,
-          updatedAt: serverTimestamp(),
-        })
+      const userId = auth.currentUser?.uid;
+      if (!userId) {
+        Alert.alert("Error", "You must be logged in to provide feedback");
+        return;
       }
 
-      // Update the opportunity in state
-      const updatedPastOpportunities = pastOpportunities.map((opp) => {
-        if (opp.id === selectedOpportunity.id) {
-          // Calculate new average rating
-          const totalRating = Number.parseFloat(opp.avgRating) * opp.ratingCount
-          const newRatingCount = opp.userHasRated ? opp.ratingCount : opp.ratingCount + 1
-          const newTotalRating = opp.userHasRated ? totalRating - opp.userRating + userRating : totalRating + userRating
-          const newAvgRating = (newTotalRating / newRatingCount).toFixed(1)
+      // Get existing feedback
+      const ratingsRef = collection(db, "ratings");
+      const q = query(ratingsRef, 
+        where("causeId", "==", opportunity.id),
+        where("userId", "==", userId)
+      );
+      const snapshot = await getDocs(q);
+      setRatingSnapshot(snapshot);
 
-          // Add the current user to raters if not already there
-          const updatedRaters = [...(opp.raters || [])]
-          const userAlreadyInRaters = updatedRaters.some((rater) => rater.id === auth.currentUser?.uid)
-
-          if (!userAlreadyInRaters && userProfile?.photoURL && auth.currentUser) {
-            updatedRaters.push({
-              id: auth.currentUser.uid,
-              photoURL: userProfile.photoURL,
-            })
-          }
-
-          return {
-            ...opp,
-            avgRating: newAvgRating,
-            ratingCount: newRatingCount,
-            userHasRated: true,
-            userRating,
-            raters: updatedRaters,
-          }
+      // Get all ratings for this cause to calculate average
+      const allRatingsQuery = query(ratingsRef, where("causeId", "==", opportunity.id));
+      const allRatingsSnapshot = await getDocs(allRatingsQuery);
+      let totalRating = 0;
+      let ratingCount = 0;
+      
+      allRatingsSnapshot.forEach((doc) => {
+        const ratingData = doc.data();
+        if (ratingData.rating) {
+          totalRating += ratingData.rating;
+          ratingCount++;
         }
-        return opp
-      })
+      });
 
-      // Update state with the new data
-      setPastOpportunities(updatedPastOpportunities)
-
-      // Update the selected opportunity to reflect changes immediately
-      setSelectedOpportunity({
-        ...selectedOpportunity,
-        avgRating: updatedPastOpportunities.find((opp) => opp.id === selectedOpportunity.id)?.avgRating,
-        ratingCount: updatedPastOpportunities.find((opp) => opp.id === selectedOpportunity.id)?.ratingCount,
-        userHasRated: true,
-        userRating,
-      })
-
-      // Close the modal
-      setFeedbackModalVisible(false)
-
-      // Show success message
-      Alert.alert("Success", "Your feedback has been submitted successfully")
+      const avgRating = ratingCount > 0 ? (totalRating / ratingCount).toFixed(1) : "0.0";
+      
+      if (!snapshot.empty) {
+        // Feedback exists - show it
+        const ratingData = snapshot.docs[0].data();
+        setSelectedOpportunity({
+          ...opportunity,
+          avgRating: avgRating
+        });
+        setUserRating(ratingData.rating);
+        setFeedbackText(ratingData.feedback || "");
+        setIsEditing(false);
+      } else {
+        // No feedback - create new
+        setSelectedOpportunity({
+          ...opportunity,
+          avgRating: avgRating
+        });
+        setUserRating(0);
+        setFeedbackText("");
+        setIsEditing(true);
+      }
+      setFeedbackModalVisible(true);
     } catch (error) {
-      console.error("Error submitting feedback:", error)
-      Alert.alert("Error", "Failed to submit feedback. Please try again.")
+      console.error("Error handling feedback:", error);
+      Alert.alert("Error", "Failed to load feedback");
     }
-  }
+  };
+
+  // Update handleSaveFeedback function to include proper user info
+  const handleSaveFeedback = async () => {
+    try {
+      const userId = auth.currentUser?.uid;
+      if (!userId || !selectedOpportunity) return;
+
+      const ratingsRef = collection(db, "ratings");
+      const q = query(ratingsRef, 
+        where("causeId", "==", selectedOpportunity.id),
+        where("userId", "==", userId)
+      );
+      const ratingSnapshot = await getDocs(q);
+
+      // Get current user's profile data
+      const userDoc = await getDoc(doc(db, "users", userId));
+      const userData = userDoc.exists() ? userDoc.data() as UserData : null;
+      
+      const ratingData = {
+        userId,
+        causeId: selectedOpportunity.id,
+        rating: userRating,
+        feedback: feedbackText,
+        firstName: userData?.firstName || "",
+        lastName: userData?.lastName || "",
+        userPhotoURL: userData?.photoURL || null,
+        updatedAt: new Date(),
+      };
+
+      let ratingDocRef;
+      if (!ratingSnapshot.empty) {
+        // Update existing feedback
+        ratingDocRef = ratingSnapshot.docs[0].ref;
+        await updateDoc(ratingDocRef, ratingData);
+      } else {
+        // Create new feedback
+        ratingDocRef = await addDoc(ratingsRef, {
+          ...ratingData,
+          createdAt: new Date(),
+        });
+      }
+
+      // Recalculate average rating and update UI
+      const allRatingsQuery = query(ratingsRef, where("causeId", "==", selectedOpportunity.id));
+      const allRatingsSnapshot = await getDocs(allRatingsQuery);
+      let totalRating = 0;
+      let ratingCount = 0;
+      
+      const updatedRaters = await Promise.all(
+        allRatingsSnapshot.docs.map(async (docSnapshot) => {
+          const data = docSnapshot.data();
+          if (data.rating) {
+            totalRating += data.rating;
+            ratingCount++;
+          }
+          
+          // Always fetch fresh user data for each rating
+          const raterDocRef = doc(db, "users", data.userId);
+          const raterDoc = await getDoc(raterDocRef);
+          const raterData = raterDoc.exists() ? raterDoc.data() : null;
+          
+          return {
+            userId: data.userId,
+            firstName: raterData?.firstName || "",
+            lastName: raterData?.lastName || "",
+            userPhotoURL: raterData?.photoURL || null,
+            rating: data.rating || 0,
+            feedback: data.feedback || "",
+          };
+        })
+      );
+
+      const avgRating = ratingCount > 0 ? (totalRating / ratingCount).toFixed(1) : "0.0";
+
+      // Update the opportunity in state with new average rating and raters
+      setPastOpportunities(prev => 
+        prev.map(opp => 
+          opp.id === selectedOpportunity.id 
+            ? { ...opp, avgRating, userHasRated: true, raters: updatedRaters }
+            : opp
+        )
+      );
+
+      setFeedbackModalVisible(false);
+      Alert.alert("Success", "Your feedback has been saved!");
+
+      // Refresh the opportunities to ensure all data is up to date
+      fetchOpportunities();
+    } catch (error) {
+      console.error("Error saving feedback:", error);
+      Alert.alert("Error", "Failed to save feedback");
+    }
+  };
 
   // Render star rating
   const renderStarRating = (rating: number, size = 16, interactive = false) => {
@@ -672,49 +722,56 @@ export default function HistoryScreen() {
             <Text style={styles.organizationName}>{item.organizationName}</Text>
           </View>
 
-          <Text style={styles.dateTime}>{formatFullDate(item.date, item.time)}</Text>
+          <Text style={styles.dateTime}>
+            {`${formatDate(item.date)} • ${formatTime(item.time)}`}
+          </Text>
 
           <View style={styles.ratingContainer}>
             <Text style={styles.ratingText}>Rated Experience: {item.avgRating}/5.0</Text>
             {renderStarRating(Number.parseFloat(item.avgRating))}
           </View>
 
-          {/* Participants avatars - updated to match the upcoming section */}
-          {participants.length > 0 && (
-            <View style={styles.participantsRow}>
-              {participants.slice(0, 5).map((participant: { photoURL?: string | null }, index: number) => (
-                <Image
-                  key={index}
-                  source={
-                    participant.photoURL ? { uri: participant.photoURL } : require("../assets/images/placeholder.png")
-                  }
-                  style={[styles.participantAvatar, { marginLeft: index > 0 ? -8 : 0 }]}
-                />
-              ))}
-              {participants.length > 5 && (
-                <TouchableOpacity style={styles.moreParticipantsButton} onPress={handleShowAllParticipants}>
-                  <View style={styles.moreParticipantsDots}>
-                    <View style={styles.dot} />
-                    <View style={styles.dot} />
-                    <View style={styles.dot} />
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
+          {/* Update the ratersRow section */}
+          <View style={styles.ratersRow}>
+            {item.raters?.slice(0, 4).map((rater: any, index: number) => (
+              <Image
+                key={index}
+                source={
+                  rater.userPhotoURL
+                    ? { uri: rater.userPhotoURL }
+                    : require("../assets/images/placeholder.png")
+                }
+                style={[
+                  styles.raterAvatar,
+                  { marginLeft: index > 0 ? -8 : 0, zIndex: 4 - index }
+                ]}
+                defaultSource={require("../assets/images/placeholder.png")}
+              />
+            ))}
+            {item.raters && item.raters.length > 0 && (
+              <TouchableOpacity
+                style={[styles.moreRatersButton, { zIndex: 0 }]}
+                onPress={() => handleShowFeedbackDetails(item.id)}
+              >
+                <Text style={styles.plusIcon}>
+                  {item.raters.length > 4 ? `+${item.raters.length - 4}` : "+"}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
 
           <View style={styles.cardActions}>
-            <TouchableOpacity style={styles.feedbackButton} onPress={() => handleProvideFeedback(item)}>
-              <Text style={styles.feedbackButtonText}>Provide Feedback</Text>
+            <TouchableOpacity style={styles.feedbackButton} onPress={() => handleFeedback(item)}>
+              <Text style={styles.feedbackButtonText}>
+                {item.userHasRated ? "View Feedback" : "Provide Feedback"}
+              </Text>
             </TouchableOpacity>
 
             <View style={styles.iconButtons}>
               <TouchableOpacity style={styles.iconButton}>
                 <Share2 size={20} color="#666" />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton}>
-                <Bookmark size={20} color="#666" />
-              </TouchableOpacity>
+              {renderBookmarkIcon(item.id)}
             </View>
           </View>
         </View>
@@ -757,7 +814,9 @@ export default function HistoryScreen() {
             <Text style={styles.organizationName}>{item.organizationName}</Text>
           </View>
 
-          <Text style={styles.dateTime}>{formatDate(item.date, item.time)}</Text>
+          <Text style={styles.dateTime}>
+            {`${formatDate(item.date)} • ${formatTime(item.time)}`}
+          </Text>
 
           <View style={styles.upcomingFooter}>
             <View style={styles.durationBadge}>
@@ -802,9 +861,7 @@ export default function HistoryScreen() {
               <TouchableOpacity style={styles.iconButton}>
                 <Share2 size={20} color="#666" />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton}>
-                <Bookmark size={20} color="#666" />
-              </TouchableOpacity>
+              {renderBookmarkIcon(item.id)}
             </View>
           </View>
         </View>
@@ -832,7 +889,9 @@ export default function HistoryScreen() {
             <Text style={styles.organizationName}>{item.organizationName}</Text>
           </View>
 
-          <Text style={styles.dateTime}>{formatDate(item.date, item.time)}</Text>
+          <Text style={styles.dateTime}>
+            {`${formatDate(item.date)} • ${formatTime(item.time)}`}
+          </Text>
 
           <View style={styles.upcomingFooter}>
             <View style={styles.durationBadge}>
@@ -850,9 +909,7 @@ export default function HistoryScreen() {
               <TouchableOpacity style={styles.iconButton}>
                 <Share2 size={20} color="#666" />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton}>
-                <Bookmark size={20} color="#000" fill="#000" />
-              </TouchableOpacity>
+              {renderBookmarkIcon(item.id)}
             </View>
           </View>
         </View>
@@ -866,33 +923,282 @@ export default function HistoryScreen() {
     const fetchParticipants = async () => {
       const upcomingOpportunityIds = upcomingOpportunities.map((opp) => opp.id)
       const newParticipantsMap: { [key: string]: any[] } = {}
+      const unsubscribes: (() => void)[] = []
 
       for (const opportunityId of upcomingOpportunityIds) {
         const participantsRef = ref(realtimeDb, `causes/${opportunityId}/participants`)
-        const snapshot = await new Promise((resolve) => {
-          onValue(participantsRef, (snapshot) => {
-            resolve(snapshot)
-          })
+        const unsubscribe = onValue(participantsRef, (snapshot) => {
+          const typedSnapshot = snapshot as { val: () => any }
+          const data = typedSnapshot.val()
+          if (data) {
+            const participantsList = Object.entries(data).map(([userId, userData]: [string, any]) => ({
+              id: userId,
+              ...userData,
+            }))
+            newParticipantsMap[opportunityId] = participantsList
+            setParticipantsMap(prev => ({...prev, [opportunityId]: participantsList}))
+          } else {
+            newParticipantsMap[opportunityId] = []
+            setParticipantsMap(prev => ({...prev, [opportunityId]: []}))
+          }
         })
-
-        // Fix the type error by properly typing the snapshot
-        const typedSnapshot = snapshot as { val: () => any }
-        const data = typedSnapshot.val()
-        if (data) {
-          const participantsList = Object.entries(data).map(([userId, userData]: [string, any]) => ({
-            id: userId,
-            ...userData,
-          }))
-          newParticipantsMap[opportunityId] = participantsList
-        } else {
-          newParticipantsMap[opportunityId] = []
-        }
+        unsubscribes.push(unsubscribe)
       }
-      setParticipantsMap(newParticipantsMap)
+
+      return () => {
+        unsubscribes.forEach(unsubscribe => unsubscribe())
+      }
     }
 
     fetchParticipants()
   }, [upcomingOpportunities])
+
+  const formatTime = (timeString: string) => {
+    // Remove PT suffix if it exists
+    return timeString.replace(/ PT$/, "");
+  };
+
+  // Add handleSave function
+  const handleSave = async (opportunityId: string) => {
+    try {
+      const userId = auth.currentUser?.uid
+      if (!userId) {
+        Alert.alert("Error", "You must be logged in to save opportunities")
+        return
+      }
+
+      const userDoc = await getDoc(doc(db, "users", userId))
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        const savedOpportunities = userData.saved_opportunities || []
+        const isCurrentlySaved = savedOpportunities.includes(opportunityId)
+
+        if (isCurrentlySaved) {
+          // Unsave
+          await updateDoc(doc(db, "users", userId), {
+            saved_opportunities: arrayRemove(opportunityId),
+          })
+          // Remove from local state
+          setSavedOpportunities(prev => prev.filter(opp => opp.id !== opportunityId))
+        } else {
+          // Save
+          await updateDoc(doc(db, "users", userId), {
+            saved_opportunities: arrayUnion(opportunityId),
+          })
+          // Add to local state if not already present
+          const oppToAdd = [...pastOpportunities, ...upcomingOpportunities].find(opp => opp.id === opportunityId)
+          if (oppToAdd && !savedOpportunities.some((id: string) => id === opportunityId)) {
+            setSavedOpportunities(prev => [...prev, oppToAdd])
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error saving opportunity:", error)
+      Alert.alert("Error", "Failed to save this opportunity")
+    }
+  }
+
+  // Add renderBookmarkIcon function
+  const renderBookmarkIcon = (opportunityId: string) => (
+    <TouchableOpacity style={styles.iconButton} onPress={() => handleSave(opportunityId)}>
+      <Bookmark 
+        size={20} 
+        color="#000" 
+        fill={savedOpportunities.some(opp => opp.id === opportunityId) ? "#000" : "none"} 
+      />
+    </TouchableOpacity>
+  )
+
+  // Add this function to fetch ratings when loading opportunities
+  const fetchOpportunityRatings = async (opportunityId: string) => {
+    try {
+      const ratingsRef = collection(db, "ratings");
+      const ratingsQuery = query(ratingsRef, where("causeId", "==", opportunityId));
+      const ratingsSnapshot = await getDocs(ratingsQuery);
+      
+      let totalRating = 0;
+      let ratingCount = 0;
+      let userHasRated = false;
+      const userId = auth.currentUser?.uid;
+
+      ratingsSnapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.rating) {
+          totalRating += data.rating;
+          ratingCount++;
+        }
+        if (data.userId === userId) {
+          userHasRated = true;
+        }
+      });
+
+      return {
+        avgRating: ratingCount > 0 ? (totalRating / ratingCount).toFixed(1) : "0.0",
+        userHasRated
+      };
+    } catch (error) {
+      console.error("Error fetching ratings:", error);
+      return { avgRating: "0.0", userHasRated: false };
+    }
+  };
+
+  // Update the fetchUserFeedbacks function
+  const fetchUserFeedbacks = async (opportunityId: string) => {
+    try {
+      const ratingsRef = collection(db, "ratings");
+      const ratingsQuery = query(ratingsRef, where("causeId", "==", opportunityId));
+      const ratingsSnapshot = await getDocs(ratingsQuery);
+      
+      const feedbacks = await Promise.all(
+        ratingsSnapshot.docs.map(async (docSnapshot) => {
+          const data = docSnapshot.data() as RatingData;
+          // Fetch fresh user data for each feedback
+          const userDocRef = doc(db, "users", data.userId);
+          const userDoc = await getDoc(userDocRef);
+          const userData = userDoc.exists() ? userDoc.data() as UserData : null;
+          
+          return {
+            userId: data.userId,
+            rating: data.rating || 0,
+            feedback: data.feedback || "",
+            firstName: userData?.firstName || "",
+            lastName: userData?.lastName || "",
+            userPhotoURL: userData?.photoURL || null,
+            displayName: userData?.displayName || `${userData?.firstName || ''} ${userData?.lastName || ''}`.trim() || "Anonymous",
+            createdAt: data.createdAt || new Date(),
+            updatedAt: data.updatedAt || new Date(),
+          };
+        })
+      );
+      
+      return feedbacks.sort((a, b) => {
+        const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+        const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
+        return dateB.getTime() - dateA.getTime();
+      });
+    } catch (error) {
+      console.error("Error fetching user feedbacks:", error);
+      return [];
+    }
+  };
+
+  // Add this function to handle showing feedback details
+  const handleShowFeedbackDetails = async (opportunityId: string) => {
+    const feedbacks = await fetchUserFeedbacks(opportunityId);
+    setSelectedFeedbacks(feedbacks);
+    setShowFeedbackDetails(true);
+  };
+
+  // Update the feedback details modal to show full names
+  const FeedbackDetailsModal = () => (
+    <Modal
+      visible={showFeedbackDetails}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowFeedbackDetails(false)}
+    >
+      <View style={styles.feedbackDetailsOverlay}>
+        <View style={styles.feedbackDetailsContent}>
+          <View style={styles.feedbackDetailsHeader}>
+            <Text style={styles.feedbackDetailsTitle}>User Feedbacks</Text>
+            <TouchableOpacity 
+              style={styles.closeIconButton} 
+              onPress={() => setShowFeedbackDetails(false)}
+            >
+              <X size={16} color="#666" />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.feedbackDetailsList}>
+            {selectedFeedbacks.map((feedback, index) => (
+              <View key={index} style={styles.feedbackDetailItem}>
+                <View style={styles.feedbackUserInfo}>
+                  <Image
+                    source={
+                      feedback.userPhotoURL
+                        ? { uri: feedback.userPhotoURL }
+                        : require("../assets/images/placeholder.png")
+                    }
+                    style={styles.feedbackUserAvatar}
+                    defaultSource={require("../assets/images/placeholder.png")}
+                    onError={() => console.log("Error loading avatar for user:", feedback.userId)}
+                  />
+                  <View style={styles.feedbackUserDetails}>
+                    <Text style={styles.feedbackUserName}>
+                      {feedback.displayName || "Anonymous"}
+                    </Text>
+                    <View style={styles.feedbackRating}>
+                      {renderStarRating(feedback.rating)}
+                    </View>
+                  </View>
+                </View>
+                {feedback.feedback && (
+                  <Text style={styles.feedbackText}>{feedback.feedback}</Text>
+                )}
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // Update the feedback modal content
+  const renderSuccess = () => (
+    <View style={styles.successContainer}>
+      <Text style={styles.modalTitle}>
+        {isEditing ? "Provide Your Feedback" : "Your Feedback"}
+      </Text>
+      <View style={styles.centerStarRating}>
+        {renderStarRating(userRating, 24, isEditing)}
+      </View>
+      <TextInput
+        ref={feedbackInputRef}
+        style={[
+          styles.feedbackInput,
+          isEditing ? styles.feedbackInputEditable : styles.feedbackInputReadOnly
+        ]}
+        value={feedbackText}
+        onChangeText={text => isEditing ? setFeedbackText(text) : null}
+        editable={isEditing}
+        multiline
+        placeholder={isEditing ? "Share your experience..." : ""}
+        placeholderTextColor="#999"
+      />
+      <View style={styles.modalButtons}>
+        {isEditing ? (
+          <>
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={handleSaveFeedback}
+            >
+              <Text style={styles.buttonText}>Save Feedback</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.cancelButton]}
+              onPress={() => setFeedbackModalVisible(false)}
+            >
+              <Text style={styles.buttonText}>Cancel</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={[styles.button, styles.primaryButton]}
+              onPress={() => setIsEditing(true)}
+            >
+              <Text style={styles.buttonText}>Edit Feedback</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.closeButton]}
+              onPress={() => setFeedbackModalVisible(false)}
+            >
+              <Text style={styles.buttonText}>Close</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </View>
+  );
 
   if (!fontsLoaded) {
     return null // Return null while fonts are loading
@@ -904,9 +1210,7 @@ export default function HistoryScreen() {
 
       {/* Header with more spacing */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <ArrowLeft size={24} color="#000" />
-        </TouchableOpacity>
+        <View style={styles.headerLeft} />
         <Text style={styles.headerTitle}>Volunteer History</Text>
         <View style={styles.headerRight} />
       </View>
@@ -1037,53 +1341,14 @@ export default function HistoryScreen() {
 
       {/* Feedback Modal */}
       <Modal
+        visible={feedbackModalVisible}
         animationType="slide"
         transparent={true}
-        visible={feedbackModalVisible}
         onRequestClose={() => setFeedbackModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
+        <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Provide Feedback</Text>
-              <TouchableOpacity style={styles.closeButton} onPress={() => setFeedbackModalVisible(false)}>
-                <X size={20} color="#000" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.feedbackForm}>
-              <View style={styles.userInfoRow}>
-                {userProfile?.photoURL ? (
-                  <Image source={{ uri: userProfile.photoURL }} style={styles.userAvatar} />
-                ) : (
-                  <View style={styles.userAvatarPlaceholder} />
-                )}
-              </View>
-
-              <View style={styles.ratingInputContainer}>
-                <Text style={styles.ratingLabel}>Rate your experience:</Text>
-                {renderStarRating(userRating, 24, true)}
-              </View>
-
-              <View style={styles.feedbackInputContainer}>
-                <TextInput
-                  ref={feedbackInputRef}
-                  style={styles.feedbackInput}
-                  placeholder="Write Something from the Event"
-                  value={feedbackText}
-                  onChangeText={setFeedbackText}
-                  multiline
-                />
-              </View>
-
-              <TouchableOpacity
-                style={[styles.submitButton, (!userRating || userRating === 0) && styles.disabledButton]}
-                onPress={submitFeedback}
-                disabled={!userRating || userRating === 0}
-              >
-                <Text style={styles.submitButtonText}>Submit Feedback</Text>
-              </TouchableOpacity>
-            </View>
+            {renderSuccess()}
           </View>
         </View>
       </Modal>
@@ -1157,9 +1422,17 @@ export default function HistoryScreen() {
 
       {/* Bottom Navigation */}
       <BottomNavigation activeTab="history" />
+
+      <FeedbackDetailsModal />
     </SafeAreaView>
   )
 }
+
+const baseButtonStyle: ViewStyle = {
+  padding: 10,
+  borderRadius: 10,
+  width: "45%",
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -1171,8 +1444,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingTop: 50, // Increased from 30 to 50 to push header down further
-    paddingBottom: 20,
+    paddingTop: 60, // Increased from 50 to 60 to push header down further
+    paddingBottom: 25, // Increased from 20 to 25
   },
   backButton: {
     padding: 8,
@@ -1280,13 +1553,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#eee",
     flexDirection: "row",
+    flex: 1,
+    marginHorizontal: 2, // Add some horizontal margin
   },
   opportunityContent: {
     flex: 1,
     padding: 12,
+    width: "70%", // Increase content width
   },
   opportunityImage: {
-    width: 120,
+    width: "30%", // Adjust image width to complement content
     height: "100%",
     resizeMode: "cover",
   },
@@ -1352,16 +1628,21 @@ const styles = StyleSheet.create({
   ratingContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 20,
+    flexWrap: "wrap", // Allow text to wrap if needed
   },
   ratingText: {
     fontSize: 12,
     color: "#666",
     marginRight: 8,
+    marginBottom: 4, // Add some bottom margin for wrapped text
   },
-  ratersContainer: {
+  ratersRow: {
     flexDirection: "row",
-    marginBottom: 8,
+    alignItems: "center",
+    marginBottom: 12,
+    marginTop: 8,
+    height: 32, // Increased height for better visibility
   },
   upcomingFooter: {
     flexDirection: "row",
@@ -1466,87 +1747,66 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
   },
-  modalOverlay: {
+  modalContainer: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   modalContent: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
+    backgroundColor: "white",
+    borderRadius: 20,
+    padding: 20,
     width: "90%",
-    padding: 16,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
+    maxWidth: 400,
   },
   modalTitle: {
-    fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 18,
-    color: "#15B2BF",
-  },
-  closeButton: {
-    padding: 4,
-  },
-  feedbackForm: {
-    alignItems: "center",
-  },
-  userInfoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  userAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  userAvatarPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#f0f0f0",
-  },
-  ratingInputContainer: {
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  ratingLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 8,
-  },
-  feedbackInputContainer: {
-    width: "100%",
+    fontSize: 16,
+    fontWeight: "600",
+    textAlign: "center",
     marginBottom: 16,
   },
   feedbackInput: {
-    width: "100%",
-    height: 100,
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 10,
+    padding: 10,
+    height: 100,
     textAlignVertical: "top",
+    marginBottom: 20,
+    fontSize: 14,
   },
-  submitButton: {
+  feedbackInputEditable: {
+    borderColor: "#15B2BF",
+    backgroundColor: "#fff",
+  },
+  feedbackInputReadOnly: {
+    borderColor: "#ddd",
+    backgroundColor: "#f5f5f5",
+  },
+  modalButtons: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  button: {
+    padding: 10,
+    borderRadius: 10,
+    width: "45%",
+  },
+  primaryButton: {
+    ...baseButtonStyle,
     backgroundColor: "#15B2BF",
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 24,
-    alignItems: "center",
-    width: "100%",
   },
-  disabledButton: {
-    backgroundColor: "#ccc",
+  closeButton: {
+    ...baseButtonStyle,
+    backgroundColor: "#666",
   },
-  submitButtonText: {
-    color: "#fff",
-    fontSize: 16,
+  cancelButton: {
+    ...baseButtonStyle,
+    backgroundColor: "#FF4757",
+  },
+  buttonText: {
+    color: "white",
+    textAlign: "center",
     fontWeight: "bold",
   },
   participantsModalOverlay: {
@@ -1622,5 +1882,118 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
   },
+  headerLeft: {
+    width: 40,
+  },
+  raterAvatar: {
+    width: 32, // Increased size
+    height: 32, // Increased size
+    borderRadius: 16,
+    borderWidth: 2, // Increased border width
+    borderColor: "#fff",
+    backgroundColor: "#f0f0f0",
+  },
+  moreRatersButton: {
+    width: 32, // Match avatar size
+    height: 32, // Match avatar size
+    borderRadius: 16,
+    backgroundColor: "#15B2BF", // Changed to theme color
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: -8,
+    borderWidth: 2,
+    borderColor: "#fff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  plusIcon: {
+    fontSize: 16, // Increased font size
+    color: "#fff", // Changed to white for better contrast
+    fontWeight: "bold",
+    textAlign: "center",
+    lineHeight: 20,
+  },
+  feedbackDetailsOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  feedbackDetailsContent: {
+    width: "90%",
+    maxHeight: "80%",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 16,
+  },
+  feedbackDetailsHeader: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    position: "relative",
+  },
+  feedbackDetailsTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  feedbackDetailsList: {
+    marginTop: 12,
+  },
+  feedbackDetailItem: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  feedbackUserInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  feedbackUserAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 12,
+    backgroundColor: '#f0f0f0', // Add background color for placeholder
+  },
+  feedbackUserDetails: {
+    flex: 1,
+  },
+  feedbackUserName: {
+    fontSize: 16,
+    fontWeight: "500",
+    marginBottom: 4,
+  },
+  feedbackRating: {
+    flexDirection: "row",
+  },
+  feedbackText: {
+    fontSize: 14,
+    color: "#666",
+    marginTop: 4,
+  },
+  successContainer: {
+    padding: 16,
+  },
+  centerStarRating: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  closeIconButton: {
+    position: "absolute",
+    right: 0,
+    top: 12,
+    width: 24,
+    height: 24,
+    justifyContent: "center",
+    alignItems: "center",
+  },
 })
-

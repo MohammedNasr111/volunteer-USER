@@ -9,6 +9,7 @@ import { db, realtimeDb } from "../app/firebase/config"
 import { Calendar, Clock } from "lucide-react-native"
 
 export interface Opportunity {
+  causeTypes: any
   id: string
   name: string
   imageUrl?: string

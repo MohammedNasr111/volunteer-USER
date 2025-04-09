@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import {
   View,
   Text,
@@ -10,14 +10,31 @@ import {
   FlatList,
   ActivityIndicator,
   SafeAreaView,
+  Image,
+  Modal,
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { Search, Filter, ArrowLeft } from "lucide-react-native"
-import { collection, query, getDocs, orderBy, limit } from "firebase/firestore"
-import { db } from "./firebase/config"
+import { Search, ArrowLeft, ChevronDown, X, Check, Heart } from "lucide-react-native"
+import {
+  collection,
+  query,
+  getDocs,
+  getDoc,
+  orderBy,
+  limit,
+  doc,
+  where,
+  updateDoc,
+  arrayUnion,
+  arrayRemove,
+} from "firebase/firestore"
+import { db, auth } from "./firebase/config"
 import { useFonts } from "expo-font"
-import OpportunityCard, { type Opportunity } from "../components/opportunity-card"
+import type { Opportunity } from "../components/opportunity-card"
+import { ref, get } from "firebase/database"
+import { realtimeDb } from "./firebase/config"
+import React from "react"
 
 // Define the filter options
 const filterOptions = [
@@ -28,12 +45,50 @@ const filterOptions = [
   { id: "virtual", label: "Virtual" },
 ]
 
+// Define distance options for location filter
+const distanceOptions = [
+  { id: "5km", label: "5 km" },
+  { id: "10km", label: "10 km" },
+  { id: "15km", label: "15 km" },
+  { id: "20km", label: "20 km+" },
+]
+
+// Define cause types
+const causeTypes = [
+  { id: "environment", label: "Environment" },
+  { id: "technology", label: "Technology" },
+  { id: "community", label: "Community" },
+  { id: "women", label: "Women" },
+  { id: "animals", label: "Animals" },
+  { id: "food", label: "Food" },
+  { id: "arts", label: "Arts & Culture" },
+  { id: "elderly", label: "Elderly" },
+  { id: "health", label: "Health" },
+  { id: "sports", label: "Sports & Recreation" },
+  { id: "disaster", label: "Disaster Relief" },
+  { id: "youth", label: "Youth" },
+  { id: "education", label: "Education" },
+  { id: "politics", label: "Politics" },
+  { id: "race", label: "Race & Ethnicity" },
+]
+
 export default function DiscoverScreen() {
   const router = useRouter()
   const [searchQuery, setSearchQuery] = useState("")
   const [activeFilter, setActiveFilter] = useState("all")
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
+  const [filteredOpportunities, setFilteredOpportunities] = useState<Opportunity[]>([])
   const [loading, setLoading] = useState(true)
+  const [userLocation, setUserLocation] = useState("Kuala Lumpur")
+  const [savedCauses, setSavedCauses] = useState<string[]>([])
+
+  // Filter states
+  const [showLocationFilter, setShowLocationFilter] = useState(false)
+  const [showSortFilter, setShowSortFilter] = useState(false)
+  const [showCausesFilter, setShowCausesFilter] = useState(false)
+  const [selectedDistance, setSelectedDistance] = useState("")
+  const [selectedCauses, setSelectedCauses] = useState<string[]>([])
+  const [sortOption, setSortOption] = useState("newest")
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
@@ -42,86 +97,375 @@ export default function DiscoverScreen() {
     "AbhayaLibre-ExtraBold": require("../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
   })
 
-  useEffect(() => {
-    const fetchOpportunities = async () => {
-      try {
-        // Create a base query
-        const opportunitiesQuery = query(collection(db, "causes"), orderBy("date", "asc"), limit(20))
+  // Function to fetch saved causes
+  const fetchSavedCauses = useCallback(async () => {
+    if (!auth.currentUser) return
 
-        // Apply filters if needed
-        // This is a simplified example - in a real app, you'd implement more complex filtering
-        if (activeFilter === "today") {
-          const today = new Date()
-          today.setHours(0, 0, 0, 0)
-          const tomorrow = new Date(today)
-          tomorrow.setDate(tomorrow.getDate() + 1)
+    try {
+      // Get saved causes from Firestore
+      const userDoc = await getDoc(doc(db, "users", auth.currentUser.uid))
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        const savedOpportunities = userData.saved_opportunities || []
+        setSavedCauses(savedOpportunities)
+      }
+    } catch (error) {
+      console.error("Error fetching saved causes:", error)
+    }
+  }, [])
 
-          // You would add where clauses here for date filtering
+  // Function to toggle saved cause
+  const toggleSavedCause = async (causeId: string) => {
+    if (!auth.currentUser) {
+      // Redirect to login or show login prompt
+      alert("Please login to save causes")
+      return
+    }
+
+    try {
+      const userRef = doc(db, "users", auth.currentUser.uid)
+      const userDoc = await getDoc(userRef)
+
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        const savedOpportunities = userData.saved_opportunities || []
+
+        if (savedOpportunities.includes(causeId)) {
+          // Remove from saved causes
+          await updateDoc(userRef, {
+            saved_opportunities: arrayRemove(causeId),
+          })
+          setSavedCauses(savedCauses.filter((id) => id !== causeId))
+        } else {
+          // Add to saved causes
+          await updateDoc(userRef, {
+            saved_opportunities: arrayUnion(causeId),
+          })
+          setSavedCauses([...savedCauses, causeId])
         }
+      }
+    } catch (error) {
+      console.error("Error toggling saved cause:", error)
+    }
+  }
 
-        const opportunitiesSnapshot = await getDocs(opportunitiesQuery)
-        const opportunitiesList = opportunitiesSnapshot.docs.map((doc) => {
-          const data = doc.data()
+  // Function to fetch opportunities
+  const fetchOpportunities = useCallback(async () => {
+    try {
+      setLoading(true)
+
+      // Get current date to filter out past causes
+      const now = new Date()
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+      // Create a base query that only gets current and future causes
+      const opportunitiesQuery = query(
+        collection(db, "causes"),
+        where("date", ">=", today.toISOString().split("T")[0]),
+        orderBy("date", "asc"),
+        limit(50),
+      )
+
+      const opportunitiesSnapshot = await getDocs(opportunitiesQuery)
+
+      const opportunitiesList = await Promise.all(
+        opportunitiesSnapshot.docs.map(async (docSnapshot) => {
+          const data = docSnapshot.data()
+
+          // Get organization data if needed
+          let orgName = data.organizationName || ""
+          let orgLogo = data.organizationLogo || ""
+
+          if (data.createdBy && (!orgName || !orgLogo)) {
+            try {
+              const orgDocRef = doc(db, "admins", data.createdBy)
+              const orgDoc = await getDoc(orgDocRef)
+              const orgData = orgDoc.data() as { organizationName?: string; photoURL?: string }
+              if (!orgName && orgData?.organizationName) {
+                orgName = orgData.organizationName
+              }
+              if (!orgLogo && orgData?.photoURL) {
+                orgLogo = orgData.photoURL
+              }
+            } catch (error) {
+              console.error("Error fetching organization data:", error)
+            }
+          }
+
+          // Get real-time participant count
+          let participantsCount = data.registeredCount || 0
+          try {
+            const countRef = ref(realtimeDb, `causes/${docSnapshot.id}/participantsCount`)
+            const countSnapshot = await get(countRef)
+            if (countSnapshot.exists()) {
+              participantsCount = countSnapshot.val() || 0
+            }
+          } catch (error) {
+            console.error("Error fetching participant count:", error)
+          }
+
           return {
-            id: doc.id,
+            id: docSnapshot.id,
             name: data.name || "",
             imageUrl: data.imageUrl || "",
             date: data.date || "",
             time: data.time || "",
             city: data.city || "",
             volunteers: data.volunteers || "0",
-            organizationName: data.organizationName || "",
-            organizationLogo: data.organizationLogo || "",
+            organizationName: orgName,
+            organizationLogo: orgLogo,
             createdBy: data.createdBy || "",
             description: data.description || "",
-            registeredCount: data.registeredCount || 0,
-            createdAt: data.createdAt || "",
+            registeredCount: participantsCount,
+            causeTypes: data.causeTypes || [],
+            location: data.location || null,
           }
-        })
+        }),
+      )
 
-        setOpportunities(opportunitiesList)
-      } catch (error) {
-        console.error("Error fetching opportunities:", error)
-      } finally {
-        setLoading(false)
+      setOpportunities(opportunitiesList)
+      setFilteredOpportunities(opportunitiesList)
+    } catch (error) {
+      console.error("Error fetching opportunities:", error)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Initial data loading
+  useEffect(() => {
+    fetchOpportunities()
+    fetchSavedCauses()
+  }, [fetchOpportunities, fetchSavedCauses])
+
+  // Apply filters when search query, active filter, or other filters change
+  useEffect(() => {
+    if (opportunities.length === 0) return
+
+    let filtered = [...opportunities]
+
+    // Apply search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(
+        (opp) =>
+          opp.name.toLowerCase().includes(query) ||
+          (opp.organizationName?.toLowerCase() || "").includes(query) ||
+          (opp.description?.toLowerCase() || "").includes(query),
+      )
+    }
+
+    // Apply time filter
+    if (activeFilter !== "all") {
+      const now = new Date()
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const endOfWeek = new Date(today)
+      endOfWeek.setDate(today.getDate() + 7)
+
+      const saturday = new Date(today)
+      saturday.setDate(today.getDate() + (6 - today.getDay()))
+      const sunday = new Date(saturday)
+      sunday.setDate(saturday.getDate() + 1)
+
+      filtered = filtered.filter((opp) => {
+        if (!opp.date) return false
+        const oppDate = new Date(opp.date)
+
+        switch (activeFilter) {
+          case "today":
+            return oppDate.toDateString() === today.toDateString()
+          case "this-week":
+            return oppDate >= today && oppDate < endOfWeek
+          case "weekend":
+            return (
+              oppDate.toDateString() === saturday.toDateString() || oppDate.toDateString() === sunday.toDateString()
+            )
+          case "virtual":
+            return opp.city?.toLowerCase().includes("virtual") || false
+          default:
+            return true
+        }
+      })
+    }
+
+    // Apply cause type filter
+    if (selectedCauses.length > 0) {
+      filtered = filtered.filter((opp) => {
+        if (!opp.causeTypes || opp.causeTypes.length === 0) return false
+        return selectedCauses.some((cause) =>
+          opp.causeTypes.map((c: string) => c.toLowerCase()).includes(cause.toLowerCase()),
+        )
+      })
+    }
+
+    // Apply distance filter (simplified - would need actual geolocation in a real app)
+    if (selectedDistance) {
+      // This is a simplified version - in a real app, you would calculate actual distances
+      // based on user's current location and the event location coordinates
+      const distanceKm = Number.parseInt(selectedDistance.replace("km", ""))
+
+      // For demo purposes, we'll just filter randomly based on the distance
+      if (distanceKm < 20) {
+        // Filter out some percentage of opportunities based on distance
+        const filterPercentage = distanceKm / 20 // e.g., 5km = 25% kept, 15km = 75% kept
+        filtered = filtered.filter(() => Math.random() < filterPercentage)
       }
     }
 
-    fetchOpportunities()
-  }, [activeFilter])
+    // Apply sort
+    if (sortOption === "newest") {
+      filtered.sort((a, b) => {
+        if (!a.date || !b.date) return 0
+        return new Date(b.date).getTime() - new Date(a.date).getTime()
+      })
+    } else if (sortOption === "oldest") {
+      filtered.sort((a, b) => {
+        if (!a.date || !b.date) return 0
+        return new Date(a.date).getTime() - new Date(b.date).getTime()
+      })
+    }
+
+    setFilteredOpportunities(filtered)
+  }, [opportunities, searchQuery, activeFilter, selectedDistance, selectedCauses, sortOption])
 
   if (!fontsLoaded) {
     return null // Return null while fonts are loading
   }
 
-  const handleSearch = () => {
-    // For now, just log the search query
-    console.log("Searching for:", searchQuery)
-    // In a real app, you'd navigate to a search results page
+  const handleSearch = (text: string) => {
+    setSearchQuery(text)
   }
 
   const handleFilterChange = (filterId: string) => {
     setActiveFilter(filterId)
-    setLoading(true)
   }
 
   const handleOpportunityPress = (opportunityId: string) => {
-    // For now, just log the opportunity ID
-    console.log("Opportunity pressed:", opportunityId)
-    // In a real app, you'd navigate to the opportunity details
     router.push(`/opportunity/${opportunityId}` as any)
+  }
+
+  const toggleLocationFilter = () => {
+    setShowLocationFilter(!showLocationFilter)
+    setShowSortFilter(false)
+    setShowCausesFilter(false)
+  }
+
+  const toggleSortFilter = () => {
+    setShowSortFilter(!showSortFilter)
+    setShowLocationFilter(false)
+    setShowCausesFilter(false)
+  }
+
+  const toggleCausesFilter = () => {
+    setShowCausesFilter(!showCausesFilter)
+    setShowLocationFilter(false)
+    setShowSortFilter(false)
+  }
+
+  const handleSelectDistance = (distance: string) => {
+    if (selectedDistance === distance) {
+      // If clicking the same distance, unselect it
+      setSelectedDistance("")
+    } else {
+      setSelectedDistance(distance)
+    }
+    setShowLocationFilter(false)
+  }
+
+  const handleSelectSort = (sort: string) => {
+    setSortOption(sort)
+    setShowSortFilter(false)
+  }
+
+  const handleToggleCause = (causeId: string) => {
+    if (selectedCauses.includes(causeId)) {
+      setSelectedCauses(selectedCauses.filter((id) => id !== causeId))
+    } else {
+      setSelectedCauses([...selectedCauses, causeId])
+    }
+  }
+
+  const handleApplyCauses = () => {
+    setShowCausesFilter(false)
+  }
+
+  const handleClearFilters = () => {
+    setSelectedDistance("")
+    setSelectedCauses([])
+    setSortOption("newest")
+    setActiveFilter("all")
+    setSearchQuery("")
+  }
+
+  // Custom opportunity card for search results
+  const renderSearchResultItem = ({ item }: { item: Opportunity }) => {
+    // Format date (e.g., "Tuesday, August 19")
+    const formatDate = (dateString?: string) => {
+      if (!dateString) return ""
+      const date = new Date(dateString)
+      return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+    }
+
+    // Format time (e.g., "07:00 - 12:30 PM")
+    const formatTime = (timeString?: string) => {
+      if (!timeString) return ""
+      return timeString
+    }
+
+    // Get spots text
+    const maxSpots = Number.parseInt(item.volunteers || "0")
+    const registeredCount = item.registeredCount || 0
+    const spotsText = `${registeredCount}/${maxSpots} spots open`
+
+    // Check if cause is saved
+    const isSaved = savedCauses.includes(item.id)
+
+    return (
+      <View style={styles.resultCard}>
+        <View style={styles.resultContent}>
+          <Text style={styles.resultTitle}>{item.name}</Text>
+
+          <View style={styles.organizationRow}>
+            {item.organizationLogo ? (
+              <Image source={{ uri: item.organizationLogo }} style={styles.orgLogo} />
+            ) : (
+              <View style={styles.orgLogoPlaceholder} />
+            )}
+            <Text style={styles.organizationName}>{item.organizationName}</Text>
+          </View>
+
+          <Text style={styles.dateText}>{formatDate(item.date)}</Text>
+          <Text style={styles.timeText}>{formatTime(item.time)}</Text>
+
+          <Text style={styles.spotsText}>{spotsText}</Text>
+        </View>
+
+        <Image
+          source={item.imageUrl ? { uri: item.imageUrl } : require("../assets/images/placeholder.png")}
+          style={styles.resultImage}
+        />
+
+        <TouchableOpacity
+          style={[styles.heartButton, isSaved && styles.heartButtonActive]}
+          onPress={() => toggleSavedCause(item.id)}
+        >
+          <Heart size={20} color={isSaved ? "#fff" : "#666"} fill={isSaved ? "#FF4081" : "none"} />
+        </TouchableOpacity>
+      </View>
+    )
   }
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
 
-      {/* Header */}
+      {/* Header with aligned title and back button */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <ArrowLeft size={24} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Discover</Text>
+        <Text style={styles.headerTitle}>Searching Causes</Text>
+        <View style={styles.backButtonPlaceholder} />
       </View>
 
       {/* Search bar */}
@@ -129,60 +473,173 @@ export default function DiscoverScreen() {
         <Search size={20} color="#999" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Find Volunteer Opportunities"
+          placeholder={`Causes in ${userLocation}`}
           value={searchQuery}
-          onChangeText={setSearchQuery}
-          onSubmitEditing={handleSearch}
+          onChangeText={handleSearch}
         />
-        <TouchableOpacity style={styles.filterButton}>
-          <Filter size={20} color="#15B2BF" />
-        </TouchableOpacity>
+        {searchQuery ? (
+          <TouchableOpacity onPress={() => setSearchQuery("")} style={styles.clearButton}>
+            <X size={18} color="#999" />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Filter options */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filtersContainer}
-        contentContainerStyle={styles.filtersContent}
-      >
-        {filterOptions.map((option) => (
-          <TouchableOpacity
-            key={option.id}
-            style={[styles.filterOption, activeFilter === option.id && styles.activeFilterOption]}
-            onPress={() => handleFilterChange(option.id)}
-          >
-            <Text style={[styles.filterOptionText, activeFilter === option.id && styles.activeFilterOptionText]}>
-              {option.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      <View style={styles.filtersRow}>
+        <TouchableOpacity
+          style={[styles.filterButton, selectedDistance ? styles.activeFilterButton : {}]}
+          onPress={toggleLocationFilter}
+        >
+          <Text style={[styles.filterButtonText, selectedDistance ? styles.activeFilterText : {}]}>
+            Location {selectedDistance ? `(${selectedDistance})` : ""}
+          </Text>
+          <ChevronDown size={16} color={selectedDistance ? "#15B2BF" : "#666"} />
+        </TouchableOpacity>
 
-      {/* Opportunities list */}
+        <TouchableOpacity
+          style={[styles.filterButton, sortOption !== "newest" ? styles.activeFilterButton : {}]}
+          onPress={toggleSortFilter}
+        >
+          <Text style={[styles.filterButtonText, sortOption !== "newest" ? styles.activeFilterText : {}]}>Sort</Text>
+          <ChevronDown size={16} color={sortOption !== "newest" ? "#15B2BF" : "#666"} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.filterButton, selectedCauses.length > 0 ? styles.activeFilterButton : {}]}
+          onPress={toggleCausesFilter}
+        >
+          <Text style={[styles.filterButtonText, selectedCauses.length > 0 ? styles.activeFilterText : {}]}>
+            Causes {selectedCauses.length > 0 ? `(${selectedCauses.length})` : ""}
+          </Text>
+          <ChevronDown size={16} color={selectedCauses.length > 0 ? "#15B2BF" : "#666"} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Location Filter Modal */}
+      <Modal
+        visible={showLocationFilter}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLocationFilter(false)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowLocationFilter(false)}>
+          <View style={[styles.filterModal, styles.locationFilterModal]}>
+            <Text style={styles.filterModalTitle}>Select Distance</Text>
+            {distanceOptions.map((option) => (
+              <TouchableOpacity
+                key={option.id}
+                style={[styles.filterOption, selectedDistance === option.id ? styles.selectedFilterOption : {}]}
+                onPress={() => handleSelectDistance(option.id)}
+              >
+                <Text
+                  style={[
+                    styles.filterOptionText,
+                    selectedDistance === option.id ? styles.selectedFilterOptionText : {},
+                  ]}
+                >
+                  {option.label}
+                </Text>
+                {selectedDistance === option.id && <Check size={18} color="#15B2BF" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Sort Filter Modal */}
+      <Modal visible={showSortFilter} transparent animationType="fade" onRequestClose={() => setShowSortFilter(false)}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowSortFilter(false)}>
+          <View style={[styles.filterModal, styles.sortFilterModal]}>
+            <Text style={styles.filterModalTitle}>Sort By</Text>
+            <TouchableOpacity
+              style={[styles.filterOption, sortOption === "newest" ? styles.selectedFilterOption : {}]}
+              onPress={() => handleSelectSort("newest")}
+            >
+              <Text style={[styles.filterOptionText, sortOption === "newest" ? styles.selectedFilterOptionText : {}]}>
+                Newest First
+              </Text>
+              {sortOption === "newest" && <Check size={18} color="#15B2BF" />}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.filterOption, sortOption === "oldest" ? styles.selectedFilterOption : {}]}
+              onPress={() => handleSelectSort("oldest")}
+            >
+              <Text style={[styles.filterOptionText, sortOption === "oldest" ? styles.selectedFilterOptionText : {}]}>
+                Oldest First
+              </Text>
+              {sortOption === "oldest" && <Check size={18} color="#15B2BF" />}
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Causes Filter Modal */}
+      <Modal
+        visible={showCausesFilter}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCausesFilter(false)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowCausesFilter(false)}>
+          <View style={[styles.filterModal, styles.causesFilterModal]}>
+            <Text style={styles.filterModalTitle}>Select Causes</Text>
+            <ScrollView style={styles.causesScrollView}>
+              {causeTypes.map((cause) => (
+                <TouchableOpacity
+                  key={cause.id}
+                  style={[styles.filterOption, selectedCauses.includes(cause.id) ? styles.selectedFilterOption : {}]}
+                  onPress={() => handleToggleCause(cause.id)}
+                >
+                  <Text
+                    style={[
+                      styles.filterOptionText,
+                      selectedCauses.includes(cause.id) ? styles.selectedFilterOptionText : {},
+                    ]}
+                  >
+                    {cause.label}
+                  </Text>
+                  {selectedCauses.includes(cause.id) && <Check size={18} color="#15B2BF" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.applyButton} onPress={handleApplyCauses}>
+              <Text style={styles.applyButtonText}>Apply</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Opportunities List */}
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#15B2BF" />
         </View>
       ) : (
-        <FlatList
-          data={opportunities}
-          renderItem={({ item }) => (
-            <View style={styles.opportunityCardWrapper}>
-              <OpportunityCard opportunity={item} onPress={() => handleOpportunityPress(item.id)} />
-            </View>
-          )}
-          keyExtractor={(item) => item.id}
-          numColumns={2}
-          contentContainerStyle={styles.opportunitiesList}
-          columnWrapperStyle={styles.opportunitiesRow}
-          ListEmptyComponent={
+        <>
+          {filteredOpportunities.length === 0 ? (
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>No opportunities found</Text>
-              <Text style={styles.emptySubtext}>Try changing your filters or check back later</Text>
+              <Text style={styles.emptyTitle}>No results found</Text>
+              <Text style={styles.emptyText}>Please try searching for something else or adjust your filters.</Text>
+              {(searchQuery || selectedDistance || selectedCauses.length > 0 || activeFilter !== "all") && (
+                <TouchableOpacity style={styles.clearFiltersButton} onPress={handleClearFilters}>
+                  <Text style={styles.clearFiltersText}>Clear All Filters</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          }
-        />
+          ) : (
+            <FlatList
+              data={filteredOpportunities}
+              renderItem={({ item }) => (
+                <TouchableOpacity onPress={() => handleOpportunityPress(item.id)}>
+                  {renderSearchResultItem({ item })}
+                </TouchableOpacity>
+              )}
+              keyExtractor={(item) => item.id}
+              contentContainerStyle={styles.opportunitiesList}
+              showsVerticalScrollIndicator={false}
+            />
+          )}
+        </>
       )}
     </SafeAreaView>
   )
@@ -194,18 +651,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   header: {
-    paddingTop: 20,
+    paddingTop: 60, // Increased from 45 to 60 for more spacing from the top
     paddingHorizontal: 20,
-    paddingBottom: 10,
+    paddingBottom: 15,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
+    // Removed the border bottom
   },
   backButton: {
-    marginRight: 15,
+    width: 40,
+  },
+  backButtonPlaceholder: {
+    width: 40,
   },
   headerTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 24,
+    fontSize: 22,
+    textAlign: "center",
+    flex: 1,
   },
   searchContainer: {
     flexDirection: "row",
@@ -227,33 +691,105 @@ const styles = StyleSheet.create({
     height: "100%",
     fontSize: 14,
   },
-  filterButton: {
+  clearButton: {
     padding: 5,
   },
-  filtersContainer: {
-    maxHeight: 50,
-    marginBottom: 10,
+  filtersRow: {
+    flexDirection: "row",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    justifyContent: "space-between",
   },
-  filtersContent: {
-    paddingHorizontal: 15,
-  },
-  filterOption: {
-    paddingHorizontal: 15,
+  filterButton: {
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 8,
-    marginHorizontal: 5,
+    paddingHorizontal: 12,
     borderRadius: 20,
-    backgroundColor: "#f5f5f5",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
   },
-  activeFilterOption: {
-    backgroundColor: "#15B2BF",
+  activeFilterButton: {
+    borderColor: "#15B2BF",
+    backgroundColor: "#E0F7FA",
   },
-  filterOptionText: {
+  filterButtonText: {
     fontSize: 14,
     color: "#666",
+    marginRight: 5,
   },
-  activeFilterOptionText: {
-    color: "#fff",
+  activeFilterText: {
+    color: "#15B2BF",
     fontWeight: "500",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  filterModal: {
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    padding: 20,
+    width: "80%",
+    maxHeight: "80%",
+  },
+  locationFilterModal: {
+    position: "absolute",
+    top: 150,
+    left: "10%",
+  },
+  sortFilterModal: {
+    position: "absolute",
+    top: 150,
+    left: "10%",
+  },
+  causesFilterModal: {
+    position: "absolute",
+    top: 150,
+    left: "10%",
+  },
+  filterModalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 15,
+    color: "#15B2BF",
+  },
+  filterOption: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  selectedFilterOption: {
+    backgroundColor: "#E0F7FA",
+  },
+  filterOptionText: {
+    fontSize: 16,
+    color: "#333",
+  },
+  selectedFilterOptionText: {
+    color: "#15B2BF",
+    fontWeight: "500",
+  },
+  causesScrollView: {
+    maxHeight: 300,
+  },
+  applyButton: {
+    backgroundColor: "#15B2BF",
+    paddingVertical: 12,
+    borderRadius: 25,
+    alignItems: "center",
+    marginTop: 15,
+  },
+  applyButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "bold",
   },
   loadingContainer: {
     flex: 1,
@@ -261,34 +797,114 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   opportunitiesList: {
-    padding: 10,
-    paddingBottom: 20, // Reduced padding since we don't have bottom navigation
-  },
-  opportunitiesRow: {
-    justifyContent: "space-between",
-  },
-  opportunityCardWrapper: {
-    width: "48%",
-    marginBottom: 15,
+    padding: 15,
+    paddingBottom: 80, // Extra space for bottom navigation
   },
   emptyContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
-    marginTop: 50,
   },
-  emptyText: {
+  emptyTitle: {
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 10,
   },
-  emptySubtext: {
+  emptyText: {
     fontSize: 14,
     color: "#666",
     textAlign: "center",
+    marginBottom: 20,
+  },
+  clearFiltersButton: {
+    backgroundColor: "#15B2BF",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+  },
+  clearFiltersText: {
+    color: "#fff",
+    fontWeight: "bold",
+  },
+  resultCard: {
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    marginBottom: 15,
+    padding: 15,
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: "#eee",
+    position: "relative",
+  },
+  resultContent: {
+    flex: 1,
+    paddingRight: 10,
+  },
+  resultTitle: {
+    fontFamily: "AbhayaLibre-ExtraBold",
+    fontSize: 16,
+    marginBottom: 5,
+  },
+  organizationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  orgLogo: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    marginRight: 8,
+  },
+  orgLogoPlaceholder: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#f0f0f0",
+    marginRight: 8,
+  },
+  organizationName: {
+    fontSize: 14,
+    color: "#666",
+  },
+  dateText: {
+    fontSize: 12,
+    color: "#333",
+    marginBottom: 2,
+  },
+  timeText: {
+    fontSize: 12,
+    color: "#333",
+    marginBottom: 8,
+  },
+  spotsText: {
+    fontSize: 12,
+    color: "#15B2BF",
+    fontWeight: "500",
+  },
+  resultImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+  },
+  heartButton: {
+    position: "absolute",
+    bottom: 15,
+    right: 15,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#f5f5f5",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
+    elevation: 2,
+  },
+  heartButtonActive: {
+    backgroundColor: "#FF4081",
   },
 })
-
-
-

@@ -1,500 +1,307 @@
 "use client"
-import { useState, useEffect, useContext } from "react"
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator, SafeAreaView } from "react-native"
+import React, { useState, useEffect, useCallback } from "react"
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  SafeAreaView,
+  SectionList,
+  ActivityIndicator,
+  Linking,
+} from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { ArrowLeft, Bell, CheckCircle, AlertCircle, Calendar, Clock } from "lucide-react-native"
-import { collection, query, where, getDocs, orderBy, updateDoc, doc, getDoc, onSnapshot } from "firebase/firestore"
+import { collection, query, where, getDocs, updateDoc, doc, orderBy } from "firebase/firestore"
 import { auth, db } from "./firebase/config"
 import { useFonts } from "expo-font"
 import BottomNavigation from "../components/bottom-navigation"
-import { Linking } from "react-native"
-import { NotificationContext } from "./_layout"
+import { ChevronLeft, Bell, Calendar, Clock, Check, UserCog, LogIn, LogOut, UserPlus } from "lucide-react-native"
+import { notificationService } from "../services/notificationService"
 
 interface Notification {
   id: string
-  type: string
   title: string
   message: string
-  timestamp: string
-  read: boolean
-  causeName?: string
+  type: string
+  timestamp: Date
+  seen: boolean
+  userId?: string
+  organizerEmail?: string
   causeId?: string
-  reason?: string
-  adminEmail?: string
-  organizationName?: string
-  date?: string
-  time?: string
+  causeName?: string
 }
+
+declare global {
+  var unreadNotificationCount: number;
+}
+
+// Add this helper function to group notifications by date
+const groupNotificationsByDate = (notifications: Notification[]) => {
+  const groups = notifications.reduce((groups: { [key: string]: Notification[] }, notification) => {
+    const date = new Date(notification.timestamp).toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    });
+    if (!groups[date]) {
+      groups[date] = [];
+    }
+    groups[date].push(notification);
+    return groups;
+  }, {});
+
+  return Object.entries(groups).map(([date, items]) => ({
+    title: date,
+    data: items,
+  }));
+};
+
+// Add this helper function to get the appropriate icon for each notification type
+const getNotificationIcon = (type: string, seen: boolean) => {
+  const color = seen ? "#666" : "#15B2BF";
+  const size = 24;
+
+  switch (type) {
+    case 'auth':
+    case 'login':
+      return <LogIn size={size} color={color} />;
+    case 'sign_out':
+      return <LogOut size={size} color={color} />;
+    case 'profile_update':
+      return <UserCog size={size} color={color} />;
+    case 'account_creation':
+      return <UserPlus size={size} color={color} />;
+    case 'success':
+    case 'registration':
+    case 'preferences':
+      return <Check size={size} color={color} />;
+    default:
+      return <Bell size={size} color={color} />;
+  }
+};
 
 export default function NotificationsScreen() {
   const router = useRouter()
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [loading, setLoading] = useState(true)
-  const [groupedNotifications, setGroupedNotifications] = useState<{ [key: string]: Notification[] }>({})
+  const [unreadCount, setUnreadCount] = useState(0)
 
   // Load the required fonts
   const [fontsLoaded] = useFonts({
     "Alata-Regular": require("../assets/fonts/Alata-Regular.ttf"),
     "AbhayaLibre-Regular": require("../assets/fonts/AbhayaLibre-Regular.ttf"),
     "AbhayaLibre-ExtraBold": require("../assets/fonts/AbhayaLibre-ExtraBold.ttf"),
+    "Lato-Bold": require("../assets/fonts/Lato-Bold.ttf"),
   })
 
-  // Add this near the top of the component, after other hooks
-  const { refreshUnreadCount } = useContext(NotificationContext)
-
-  // Set up real-time listener for notifications
-  useEffect(() => {
-    const userId = auth.currentUser?.uid
-    if (!userId) {
-      router.replace("/splash")
-      return
-    }
-
-    setLoading(true)
-
-    let unsubscribeNotifications = () => {}
-    let unsubscribeRemovals = () => {}
-
-    try {
-      // Set up listener for regular notifications
-      const notificationsRef = collection(db, "notifications")
-      const notificationsQuery = query(notificationsRef, where("userId", "==", userId), orderBy("timestamp", "desc"))
-
-      unsubscribeNotifications = onSnapshot(
-        notificationsQuery,
-        (snapshot) => {
-          const notificationsList = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-            read: doc.data().read || false,
-          })) as Notification[]
-
-          // Update notifications state
-          updateNotifications(notificationsList, [])
-        },
-        (error) => {
-          // Only log error if user is still logged in
-          if (auth.currentUser) {
-            console.error("Error listening to notifications:", error)
-          }
-        },
-      )
-
-      // Set up listener for removal notifications
-      const removalsRef = collection(db, "participantRemovals")
-      const removalsQuery = query(removalsRef, where("userId", "==", userId))
-
-      unsubscribeRemovals = onSnapshot(
-        removalsQuery,
-        async (snapshot) => {
-          const removalsList = await Promise.all(
-            snapshot.docs.map(async (docSnapshot) => {
-              const data = docSnapshot.data()
-
-              // Fetch admin details if available
-              let adminEmail = undefined
-              let organizationName = undefined
-
-              if (data.adminId) {
-                try {
-                  const adminDocRef = doc(db, "admins", data.adminId)
-                  const adminDocSnapshot = await getDoc(adminDocRef)
-                  if (adminDocSnapshot.exists()) {
-                    const adminData = adminDocSnapshot.data()
-                    adminEmail = adminData.workEmail || adminData.email
-                    organizationName = adminData.organizationName
-                  }
-                } catch (error) {
-                  console.error("Error fetching admin details:", error)
-                }
-              }
-
-              return {
-                id: docSnapshot.id,
-                type: "removal",
-                title: "Removed from Cause",
-                message: `You have been removed from "${data.causeName}" due to: ${data.reason}`,
-                timestamp: data.timestamp,
-                read: data.seen || false,
-                causeName: data.causeName,
-                causeId: data.causeId,
-                reason: data.reason,
-                adminId: data.adminId,
-                adminEmail: adminEmail,
-                organizationName: organizationName,
-              } as Notification
-            }),
-          )
-
-          // Update notifications state
-          updateNotifications([], removalsList)
-        },
-        (error) => {
-          // Only log error if user is still logged in
-          if (auth.currentUser) {
-            console.error("Error listening to removals:", error)
-          }
-        },
-      )
-    } catch (error) {
-      console.error("Error setting up notification listeners:", error)
-      setLoading(false)
-    }
-
-    return () => {
-      try {
-        unsubscribeNotifications()
-        unsubscribeRemovals()
-      } catch (error) {
-        // Ignore cleanup errors
-      }
-    }
-  }, [router, refreshUnreadCount])
-
-  // Function to update notifications state
-  const updateNotifications = (regularNotifications: Notification[], removalNotifications: Notification[]) => {
-    // Combine both types of notifications
-    const allNotifications = [...regularNotifications, ...removalNotifications]
-
-    // Sort by timestamp (newest first)
-    allNotifications.sort((a, b) => {
-      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    })
-
-    // Group notifications by date
-    const grouped: { [key: string]: Notification[] } = {}
-
-    allNotifications.forEach((notification) => {
-      const date = new Date(notification.timestamp)
-      const dateKey = date.toLocaleDateString("en-US", {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-
-      if (!grouped[dateKey]) {
-        grouped[dateKey] = []
-      }
-
-      grouped[dateKey].push(notification)
-    })
-
-    setGroupedNotifications(grouped)
-    setNotifications(allNotifications)
-    setLoading(false)
-  }
-
-  const fetchNotifications = async () => {
-    try {
-      setLoading(true)
-      const userId = auth.currentUser?.uid
-      if (!userId) {
-        router.replace("/splash")
-        return
-      }
-
-      // Fetch regular notifications
-      const notificationsRef = collection(db, "notifications")
-      const q = query(notificationsRef, where("userId", "==", userId), orderBy("timestamp", "desc"))
-
-      const notificationsSnapshot = await getDocs(q)
-      const notificationsList = notificationsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-        read: doc.data().read || false,
-      })) as Notification[]
-
-      // Fetch participant removal notifications
-      const removalsRef = collection(db, "participantRemovals")
-      const removalsQuery = query(removalsRef, where("userId", "==", userId))
-
-      const removalsSnapshot = await getDocs(removalsQuery)
-      const removalsList = await Promise.all(
-        removalsSnapshot.docs.map(async (docSnapshot) => {
-          const data = docSnapshot.data()
-
-          // Fetch admin details if available
-          let adminEmail = undefined
-          let organizationName = undefined
-
-          if (data.adminId) {
-            try {
-              const adminDocRef = doc(db, "admins", data.adminId)
-              const adminDocSnapshot = await getDoc(adminDocRef)
-              if (adminDocSnapshot.exists()) {
-                const adminData = adminDocSnapshot.data()
-                adminEmail = adminData.workEmail || adminData.email
-                organizationName = adminData.organizationName
-              }
-            } catch (error) {
-              console.error("Error fetching admin details:", error)
-            }
-          }
-
-          return {
-            id: docSnapshot.id,
-            type: "removal",
-            title: "Removed from Cause",
-            message: `You have been removed from "${data.causeName}" due to: ${data.reason}`,
-            timestamp: data.timestamp,
-            read: data.seen || false,
-            causeName: data.causeName,
-            causeId: data.causeId,
-            reason: data.reason,
-            adminId: data.adminId,
-            adminEmail: adminEmail,
-            organizationName: organizationName,
-          } as Notification
-        }),
-      )
-
-      // Combine and sort all notifications by timestamp
-      const allNotifications = [...notificationsList, ...removalsList].sort((a, b) => {
-        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      })
-
-      // Group notifications by date
-      const grouped: { [key: string]: Notification[] } = {}
-
-      allNotifications.forEach((notification) => {
-        const date = new Date(notification.timestamp)
-        const dateKey = date.toLocaleDateString("en-US", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        })
-
-        if (!grouped[dateKey]) {
-          grouped[dateKey] = []
-        }
-
-        grouped[dateKey].push(notification)
-      })
-
-      setGroupedNotifications(grouped)
-      setNotifications(allNotifications)
-    } catch (error) {
-      console.error("Error fetching notifications:", error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchNotifications()
+  // Update unread count
+  const updateUnreadCount = useCallback((notifs: Notification[]) => {
+    const count = notifs.filter(n => !n.seen).length
+    setUnreadCount(count)
+    // Update the count in bottom navigation globally
+    global.unreadNotificationCount = count
   }, [])
 
-  // Update the markAsRead function to handle permission errors gracefully
-  const markAsRead = async (notificationId: string, type: string) => {
-    try {
-      if (type === "removal") {
-        try {
-          await updateDoc(doc(db, "participantRemovals", notificationId), {
-            seen: true,
-          })
-        } catch (error) {
-          console.log("Could not update removal notification in Firestore, updating locally only")
-          // If Firestore update fails, just update the local state
-        }
-      } else {
-        try {
-          await updateDoc(doc(db, "notifications", notificationId), {
-            read: true,
-          })
-        } catch (error) {
-          console.log("Could not update notification in Firestore, updating locally only")
-          // If Firestore update fails, just update the local state
-        }
+  // Reset notifications and count when component unmounts
+  useEffect(() => {
+    return () => {
+      global.unreadNotificationCount = 0
+    }
+  }, [])
+
+  // Fetch notifications
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        const userId = auth.currentUser?.uid
+        if (!userId) return
+
+        const notificationsRef = collection(db, "notifications")
+        const q = query(
+          notificationsRef,
+          where("userId", "==", userId),
+          orderBy("timestamp", "desc")
+        )
+        const querySnapshot = await getDocs(q)
+        
+        const notificationsData = querySnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            timestamp: data.timestamp?.toDate?.() || new Date(),
+          };
+        }) as Notification[]
+
+        setNotifications(notificationsData)
+        updateUnreadCount(notificationsData)
+      } catch (error) {
+        console.error("Error fetching notifications:", error)
+      } finally {
+        setLoading(false)
       }
+    }
 
-      // Update local state to mark as read but keep the notification in the list
-      setNotifications((prev) =>
-        prev.map((notification) =>
-          notification.id === notificationId ? { ...notification, read: true } : notification,
-        ),
-      )
+    fetchNotifications()
+  }, [updateUnreadCount])
 
-      // Update grouped notifications
-      setGroupedNotifications((prevGrouped) => {
-        const newGrouped = { ...prevGrouped }
-
-        Object.keys(newGrouped).forEach((dateKey) => {
-          newGrouped[dateKey] = newGrouped[dateKey].map((notification) =>
-            notification.id === notificationId ? { ...notification, read: true } : notification,
-          )
+  // Handle marking notification as read
+  const handleNotificationPress = async (notification: Notification) => {
+    try {
+      if (!notification.seen) {
+        const notificationRef = doc(db, "notifications", notification.id)
+        await updateDoc(notificationRef, {
+          seen: true
         })
 
-        return newGrouped
-      })
-
-      // Refresh the global unread count
-      refreshUnreadCount()
+        // Update local state
+        const updatedNotifications = notifications.map(n =>
+          n.id === notification.id ? { ...n, seen: true } : n
+        )
+        setNotifications(updatedNotifications)
+        updateUnreadCount(updatedNotifications)
+      }
     } catch (error) {
       console.error("Error marking notification as read:", error)
     }
   }
 
-  // Update the handleNotificationPress function to only mark as read without navigation
-  const handleNotificationPress = (notification: Notification) => {
-    // Mark as read for all notification types
-    markAsRead(notification.id, notification.type)
-
-    // No navigation or additional actions - just mark as read
-  }
-
-  const handleContactOrganizer = (notification: Notification) => {
-    if (notification.adminEmail) {
-      Linking.openURL(`mailto:${notification.adminEmail}?subject=Regarding removal from ${notification.causeName}`)
-    }
-  }
-
-  const formatTime = (timestamp: string) => {
+  // Handle organizer email click
+  const handleEmailPress = async (email: string, causeName: string) => {
+    const subject = encodeURIComponent(`Regarding removal from ${causeName}`)
+    const mailtoUrl = `mailto:${email}?subject=${subject}`
+    
     try {
-      const date = new Date(timestamp)
-      return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    } catch (e) {
-      return ""
+      await Linking.openURL(mailtoUrl)
+    } catch (error) {
+      console.error("Error opening email client:", error)
     }
   }
 
-  // Get notification icon based on type
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case "signup":
-        return <CheckCircle size={24} color="#15B2BF" />
-      case "removal":
-        return <AlertCircle size={24} color="#FF4757" />
-      case "new_cause":
-        return <Calendar size={24} color="#15B2BF" />
-      case "login":
-        return <CheckCircle size={24} color="#15B2BF" />
-      case "signout":
-        return <CheckCircle size={24} color="#15B2BF" />
-      default:
-        return <Bell size={24} color="#15B2BF" />
+  // Format date for display
+  const formatDate = (date: Date) => {
+    const now = new Date()
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60)
+
+    if (diffInHours < 24) {
+      if (diffInHours < 1) {
+        const minutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60))
+        return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`
+      }
+      const hours = Math.floor(diffInHours)
+      return `${hours} hour${hours !== 1 ? 's' : ''} ago`
+    } else if (diffInHours < 48) {
+      return 'Yesterday'
+    } else {
+      return date.toLocaleDateString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      })
     }
   }
 
-  if (!fontsLoaded) {
-    return null // Return null while fonts are loading
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    })
   }
 
-  // Replace the renderNotificationItem function with this combined version
-  const renderNotificationItem = ({ item }: { item: Notification }) => {
-    const isRemoval = item.type === "removal"
-    const isSignup = item.type === "signup"
-
-    return (
-      <View style={styles.notificationContainer}>
-        <TouchableOpacity
-          style={[styles.notificationItem, !item.read && styles.unreadNotification]}
-          onPress={() => handleNotificationPress(item)}
-          activeOpacity={0.7}
-        >
-          <View style={styles.notificationIconContainer}>{getNotificationIcon(item.type)}</View>
-
-          <View style={styles.notificationContent}>
-            <View style={styles.notificationHeader}>
-              <Text style={styles.notificationTitle}>{item.title}</Text>
-              <Text style={styles.notificationTime}>{formatTime(item.timestamp)}</Text>
-            </View>
-            <Text style={styles.notificationMessage}>{item.message}</Text>
-
-            {isRemoval && (
-              <View style={styles.removalInfo}>
-                <Text style={styles.removalInfoText}>
-                  For further information, contact: {item.adminEmail || "the organization"}
-                </Text>
-              </View>
-            )}
-
-            {isSignup && item.date && item.time && (
-              <View style={styles.eventDetails}>
-                <View style={styles.eventDetailRow}>
-                  <Calendar size={14} color="#666" style={styles.eventDetailIcon} />
-                  <Text style={styles.eventDetailText}>{item.date}</Text>
-                </View>
-                <View style={styles.eventDetailRow}>
-                  <Clock size={14} color="#666" style={styles.eventDetailIcon} />
-                  <Text style={styles.eventDetailText}>{item.time}</Text>
-                </View>
-              </View>
-            )}
-          </View>
-
-          {!item.read && <View style={styles.unreadIndicator} />}
-        </TouchableOpacity>
-
-        {/* Contact button outside the TouchableOpacity */}
-        {isRemoval && item.adminEmail && (
-          <TouchableOpacity onPress={() => handleContactOrganizer(item)} style={styles.contactButton}>
-            <Text style={styles.contactButtonText}>Contact Organizer</Text>
+  // Update the renderItem to include date headers
+  const renderNotificationItem = useCallback(({ item }: { item: Notification }) => (
+    <TouchableOpacity
+      style={[styles.notificationItem, !item.seen && styles.unreadNotification]}
+      onPress={() => handleNotificationPress(item)}
+    >
+      <View style={styles.notificationIcon}>
+        {getNotificationIcon(item.type, item.seen)}
+      </View>
+      <View style={styles.notificationContent}>
+        <Text style={styles.notificationTitle}>{item.title}</Text>
+        <Text style={styles.notificationMessage}>{item.message}</Text>
+        {item.type === 'removal' && item.organizerEmail && (
+          <TouchableOpacity
+            onPress={() => handleEmailPress(item.organizerEmail!, item.causeName!)}
+          >
+            <Text style={styles.emailLink}>Contact organizer</Text>
           </TouchableOpacity>
         )}
+        <View style={styles.timeContainer}>
+          <View style={styles.timeItem}>
+            <Clock size={14} color="#999" />
+            <Text style={styles.timestamp}>{formatTime(item.timestamp)}</Text>
+          </View>
+        </View>
       </View>
-    )
-  }
+    </TouchableOpacity>
+  ), [])
 
-  // Update the header section to remove the Clear All button
-  const header = (
-    <View style={styles.header}>
-      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-        <ArrowLeft size={24} color="#000" />
-      </TouchableOpacity>
-      <Text style={styles.headerTitle}>Notifications</Text>
-      <View style={styles.headerRight} />
+  const renderSectionHeader = useCallback(({ section: { title } }: { section: { title: string } }) => (
+    <View style={styles.sectionHeader}>
+      <Calendar size={16} color="#fff" />
+      <Text style={styles.sectionHeaderText}>{title}</Text>
     </View>
-  )
+  ), []);
+
+  // Group notifications by date
+  const sections = groupNotificationsByDate(notifications);
+
+  if (!fontsLoaded) {
+    return null
+  }
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
 
-      {/* Add a spacer view at the top */}
-      <View style={styles.statusBarSpacer} />
-
       {/* Header */}
-      {header}
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <ChevronLeft size={24} color="#000" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>Notification System</Text>
+        </View>
+        <View style={styles.headerRight}>
+          {unreadCount > 0 && (
+            <View style={styles.countBadge}>
+              <Text style={styles.countText}>{unreadCount}</Text>
+            </View>
+          )}
+        </View>
+      </View>
 
-      {/* Notifications List - Always show the list, never show empty state */}
+      {/* Notifications List */}
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#15B2BF" />
         </View>
-      ) : Object.keys(groupedNotifications).length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Bell size={48} color="#ccc" />
-          <Text style={styles.emptyTitle}>All notifications read up to date</Text>
-          <Text style={styles.emptyText}>
-            Here is where you'll receive notifications about upcoming causes and activities
-          </Text>
-        </View>
       ) : (
-        <FlatList
-          data={Object.entries(groupedNotifications).map(([date, notifications]) => ({
-            title: date,
-            data: notifications,
-          }))}
-          renderItem={({ item }) => (
-            <View>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionHeaderText}>{item.title}</Text>
-              </View>
-              {item.data.map((notification) => (
-                <View key={notification.id}>{renderNotificationItem({ item: notification })}</View>
-              ))}
-            </View>
-          )}
-          keyExtractor={(item) => item.title}
+        <SectionList
+          sections={sections}
+          renderItem={renderNotificationItem}
+          renderSectionHeader={renderSectionHeader}
+          keyExtractor={item => item.id}
           contentContainerStyle={styles.notificationsList}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No notifications yet</Text>
+            </View>
+          }
+          stickySectionHeadersEnabled={true}
+          initialNumToRender={10}
         />
       )}
 
-      {/* Bottom Navigation with Badge */}
-      <BottomNavigation activeTab="notifications" />
+      {/* Bottom Navigation */}
+      <BottomNavigation activeTab="notifications" notificationCount={unreadCount} />
     </SafeAreaView>
   )
 }
@@ -504,30 +311,47 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#fff",
   },
-  statusBarSpacer: {
-    height: 40,
-    backgroundColor: "#fff",
-  },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingBottom: 15,
+    paddingHorizontal: 16,
+    paddingTop: 60,
+    paddingBottom: 25,
+    height: 110,
   },
-  backButton: {
+  headerLeft: {
     width: 40,
-    height: 40,
-    justifyContent: "center",
-    alignItems: "flex-start",
+    alignItems: 'flex-start',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRight: {
+    width: 40,
+    alignItems: 'flex-end',
   },
   headerTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 22,
+    fontSize: 20,
     textAlign: "center",
   },
-  headerRight: {
-    width: 40, // Keep this to maintain header layout balance
+  backButton: {
+    padding: 8,
+  },
+  countBadge: {
+    backgroundColor: "#15B2BF",
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    minWidth: 24,
+    alignItems: 'center',
+  },
+  countText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "bold",
   },
   loadingContainer: {
     flex: 1,
@@ -535,140 +359,84 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   notificationsList: {
-    padding: 15,
-    paddingBottom: 80, // Extra space for bottom navigation
-  },
-  sectionHeader: {
-    backgroundColor: "#15B2BF",
-    padding: 10,
-    marginBottom: 10,
-    borderRadius: 5,
-  },
-  sectionHeaderText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 14,
-  },
-  notificationContainer: {
-    marginBottom: 15,
+    padding: 16,
   },
   notificationItem: {
     backgroundColor: "#fff",
-    borderRadius: 10,
-    marginBottom: 15,
-    padding: 15,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#eee",
     flexDirection: "row",
-    borderLeftWidth: 5,
-    borderLeftColor: "#eee",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-    overflow: "hidden", // Add this to contain child elements
   },
-  notificationIconContainer: {
-    marginRight: 15,
-    alignItems: "center",
-    justifyContent: "center",
+  notificationIcon: {
+    marginRight: 12,
+    paddingTop: 2,
   },
   unreadNotification: {
-    backgroundColor: "#f0f9fa",
-    borderLeftColor: "#15B2BF",
+    backgroundColor: "#E0F7FA",
+    borderColor: "#15B2BF",
   },
   notificationContent: {
     flex: 1,
   },
-  notificationHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 5,
-  },
   notificationTitle: {
-    fontFamily: "AbhayaLibre-ExtraBold",
+    fontFamily: "Lato-Bold",
     fontSize: 16,
-    flex: 1,
-  },
-  notificationTime: {
-    fontSize: 12,
-    color: "#999",
+    marginBottom: 4,
+    color: "#000",
   },
   notificationMessage: {
     fontSize: 14,
     color: "#666",
-    marginBottom: 10,
+    marginBottom: 8,
   },
-  eventDetails: {
-    marginTop: 5,
+  emailLink: {
+    color: "#15B2BF",
+    textDecorationLine: "underline",
+    marginTop: 4,
+    marginBottom: 8,
   },
-  eventDetailRow: {
+  timeContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 5,
+    marginTop: 8,
   },
-  eventDetailIcon: {
-    marginRight: 5,
+  timeItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 16,
   },
-  eventDetailText: {
+  timestamp: {
     fontSize: 12,
-    color: "#666",
-  },
-  unreadIndicator: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: "#15B2BF",
-    marginLeft: 10,
-    alignSelf: "center",
+    color: "#999",
+    marginLeft: 4,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    padding: 40,
-  },
-  emptyTitle: {
-    fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 22,
-    marginTop: 20,
-    marginBottom: 10,
-    color: "#333",
+    paddingTop: 40,
   },
   emptyText: {
-    fontFamily: "Alata-Regular",
     fontSize: 16,
     color: "#666",
     textAlign: "center",
-    lineHeight: 24,
   },
-  removalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    marginTop: 10,
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#15B2BF',
+    borderRadius: 8,
+    marginBottom: 12,
   },
-  contactButton: {
-    marginTop: 8,
-    marginLeft: 49, // To align with content
-    alignSelf: "flex-start",
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    backgroundColor: "#15B2BF",
-    borderRadius: 4,
+  sectionHeaderText: {
+    fontSize: 14,
+    color: '#fff',
+    marginLeft: 8,
+    fontFamily: "Lato-Bold",
   },
-  contactButtonText: {
-    color: "white",
-    fontSize: 12,
-    fontWeight: "bold",
-  },
-  removalInfo: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-  },
-  removalInfoText: {
-    fontSize: 12,
-    color: "#666",
-    fontStyle: "italic",
-  },
-})
+});

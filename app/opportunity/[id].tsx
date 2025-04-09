@@ -1,4 +1,5 @@
 "use client"
+import React from 'react'
 import { useState, useEffect, useCallback } from "react"
 import {
   View,
@@ -36,6 +37,7 @@ import { useFonts } from "expo-font"
 import JoinCauseFlow from "../../components/join-cause-flow"
 import { get, ref, set, runTransaction, onValue } from "firebase/database"
 import { realtimeDb } from "../firebase/config"
+import shareUtils from "../utils/shareUtils"
 
 // Define the participant type
 interface Participant {
@@ -913,8 +915,34 @@ function OpportunityDetailScreen() {
   }
 
   const handleShare = () => {
-    // Implement share functionality
-    Alert.alert("Share", "Sharing functionality will be implemented here")
+    if (!opportunity) return;
+
+    const causeDetails = {
+      id: opportunity.id,
+      name: opportunity.name,
+      date: opportunity.date,
+      time: opportunity.time,
+      organizationName: opportunity.organizationName,
+      city: opportunity.city,
+      description: opportunity.description,
+      maxParticipants: opportunity.maxParticipants,
+      registeredCount: opportunity.registeredCount
+    };
+
+    const opportunityDate = new Date(opportunity.date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let causeType: 'new' | 'upcoming' | 'past';
+    if (opportunityDate < today) {
+      causeType = 'past';
+    } else if (opportunity.registeredCount === 0) {
+      causeType = 'new';
+    } else {
+      causeType = 'upcoming';
+    }
+
+    shareUtils.shareCauseViaEmail(causeDetails, causeType);
   }
 
   const handleContactEmail = () => {
@@ -1105,19 +1133,21 @@ function OpportunityDetailScreen() {
                 <Text style={styles.joinButtonText}>
                   {isRegistered
                     ? "Cancel Registration"
+                    : sameDayConflict.exists && new Date(opportunity.date) < new Date()
+                      ? "Cause Already Past"
                     : sameDayConflict.exists
                       ? "Already Registered"
                       : isFull && !isRegistered
-                        ? "Event Full"
+                        ? "Cause Full"
                         : new Date(opportunity.date) < new Date()
-                          ? "Event Passed"
+                          ? "Cause Already Past"
                           : "Join & Sign Up"}
                 </Text>
               )}
             </TouchableOpacity>
 
             {/* Conflict Message and Options */}
-            {sameDayConflict.exists && !isRegistered && (
+            {sameDayConflict.exists && !isRegistered && new Date(opportunity.date) >= new Date() && (
               <View style={styles.conflictContainer}>
                 <Text style={styles.conflictMessage}>
                   You can only participate in one cause per day. You're already registered for "
@@ -1373,19 +1403,21 @@ function OpportunityDetailScreen() {
                 <Text style={styles.joinButtonText}>
                   {isRegistered
                     ? "Cancel Registration"
+                    : sameDayConflict.exists && new Date(opportunity.date) < new Date()
+                      ? "Cause Already Past"
                     : sameDayConflict.exists
                       ? "Already Registered"
                       : isFull && !isRegistered
-                        ? "Event Full"
+                        ? "Cause Full"
                         : new Date(opportunity.date) < new Date()
-                          ? "Event Passed"
+                          ? "Cause Already Past"
                           : "Join & Sign Up"}
                 </Text>
               )}
             </TouchableOpacity>
 
             {/* Conflict Message and Options (bottom) */}
-            {sameDayConflict.exists && !isRegistered && (
+            {sameDayConflict.exists && !isRegistered && new Date(opportunity.date) >= new Date() && (
               <View style={styles.conflictContainer}>
                 <Text style={styles.conflictMessage}>
                   You can only participate in one cause per day. You're already registered for "

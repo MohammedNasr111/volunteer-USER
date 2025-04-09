@@ -15,7 +15,7 @@ import {
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { Edit2, LogOut, ArrowLeft, Info, X, Calendar, Clock } from "lucide-react-native"
+import { Edit2, LogOut, Info, X, Calendar, Clock } from "lucide-react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import { doc, getDoc, updateDoc } from "firebase/firestore"
 import { auth, db, storage } from "./firebase/config"
@@ -277,101 +277,112 @@ export default function ProfileScreen() {
     try {
       setLoadingOpportunities(true)
       let opportunitiesList: Opportunity[] = []
-      const now = new Date()
 
-      if (tabType === "upcoming" || tabType === "past") {
-        // Get user's registered opportunities
-        const userDoc = await getDoc(doc(db, "users", userId))
-        if (userDoc.exists()) {
-          const userData = userDoc.data()
-          const registeredOpportunityIds = userData.registered_opportunities || []
-
-          if (registeredOpportunityIds.length > 0) {
-            // Fetch each opportunity
-            const opportunitiesPromises = registeredOpportunityIds.map(async (oppId: string) => {
-              const oppDoc = await getDoc(doc(db, "causes", oppId))
-              if (oppDoc.exists()) {
-                const oppData = oppDoc.data()
-                const oppDate = new Date(oppData.date)
-
-                // Filter based on tab type
-                if ((tabType === "upcoming" && oppDate >= now) || (tabType === "past" && oppDate < now)) {
-                  return {
-                    id: oppDoc.id,
-                    name: oppData.name || "",
-                    imageUrl: oppData.imageUrl || "",
-                    date: oppData.date || "",
-                    time: oppData.time || "",
-                    city: oppData.city || "",
-                    volunteers: oppData.volunteers || "0",
-                    organizationName: oppData.organizationName || "",
-                    organizationLogo: oppData.organizationLogo || "",
-                    description: oppData.description || "",
-                    registeredCount: oppData.registeredCount || 0,
-                    createdBy: oppData.createdBy || "", // Add createdBy field
-                  }
-                }
-              }
-              return null
-            })
-
-            const results = await Promise.all(opportunitiesPromises)
-            opportunitiesList = results.filter(Boolean) as Opportunity[]
-
-            // Sort by date (oldest first)
-            opportunitiesList.sort((a, b) => {
-              // Handle potential undefined dates with fallback to empty string
-              const dateA = a.date ? new Date(a.date).getTime() : 0
-              const dateB = b.date ? new Date(b.date).getTime() : 0
-              return dateA - dateB // Sort in ascending order (oldest first)
-            })
-          }
-        }
-      } else if (tabType === "saved") {
-        // Get user's saved opportunities
-        const userDoc = await getDoc(doc(db, "users", userId))
-        if (userDoc.exists()) {
-          const userData = userDoc.data()
+      // Get user's data
+      const userDoc = await getDoc(doc(db, "users", userId))
+      if (userDoc.exists()) {
+        const userData = userDoc.data()
+        
+        if (tabType === "saved") {
+          // Get saved opportunities
           const savedOpportunityIds = userData.saved_opportunities || []
-
+          
           if (savedOpportunityIds.length > 0) {
-            // Fetch each opportunity
             const opportunitiesPromises = savedOpportunityIds.map(async (oppId: string) => {
               const oppDoc = await getDoc(doc(db, "causes", oppId))
               if (oppDoc.exists()) {
                 const oppData = oppDoc.data()
+                
+                // Get organization data if available
+                let organizationName = oppData.organizationName || ""
+                let organizationLogo = oppData.organizationLogo || ""
+                
+                if (oppData.createdBy) {
+                  try {
+                    const orgDoc = await getDoc(doc(db, "admins", oppData.createdBy))
+                    if (orgDoc.exists()) {
+                      const orgData = orgDoc.data()
+                      organizationName = orgData.organizationName || organizationName
+                      organizationLogo = orgData.photoURL || organizationLogo
+                    }
+                  } catch (error) {
+                    console.error("Error fetching organization data:", error)
+                  }
+                }
+                
                 return {
                   id: oppDoc.id,
                   name: oppData.name || "",
                   imageUrl: oppData.imageUrl || "",
                   date: oppData.date || "",
-                  time: oppData.time || "",
+                  time: oppData.time.replace(" PT", ""), // Remove PT suffix
                   city: oppData.city || "",
                   volunteers: oppData.volunteers || "0",
-                  organizationName: oppData.organizationName || "",
-                  organizationLogo: oppData.organizationLogo || "",
+                  organizationName,
+                  organizationLogo,
                   description: oppData.description || "",
                   registeredCount: oppData.registeredCount || 0,
-                  createdBy: oppData.createdBy || "", // Add createdBy field
+                  createdBy: oppData.createdBy || "",
                 }
               }
               return null
             })
-
+            
             const results = await Promise.all(opportunitiesPromises)
             opportunitiesList = results.filter(Boolean) as Opportunity[]
+          }
+        } else {
+          // Handle other tabs (upcoming/past) as before
+          const now = new Date()
 
-            // Sort by date (oldest first)
-            opportunitiesList.sort((a, b) => {
-              // Handle potential undefined dates with fallback to empty string
-              const dateA = a.date ? new Date(a.date).getTime() : 0
-              const dateB = b.date ? new Date(b.date).getTime() : 0
-              return dateA - dateB // Sort in ascending order (oldest first)
-            })
+          if (tabType === "upcoming" || tabType === "past") {
+            // Get user's registered opportunities
+            const registeredOpportunityIds = userData.registered_opportunities || []
+
+            if (registeredOpportunityIds.length > 0) {
+              // Fetch each opportunity
+              const opportunitiesPromises = registeredOpportunityIds.map(async (oppId: string) => {
+                const oppDoc = await getDoc(doc(db, "causes", oppId))
+                if (oppDoc.exists()) {
+                  const oppData = oppDoc.data()
+                  const oppDate = new Date(oppData.date)
+
+                  // Filter based on tab type
+                  if ((tabType === "upcoming" && oppDate >= now) || (tabType === "past" && oppDate < now)) {
+                    return {
+                      id: oppDoc.id,
+                      name: oppData.name || "",
+                      imageUrl: oppData.imageUrl || "",
+                      date: oppData.date || "",
+                      time: oppData.time || "",
+                      city: oppData.city || "",
+                      volunteers: oppData.volunteers || "0",
+                      organizationName: oppData.organizationName || "",
+                      organizationLogo: oppData.organizationLogo || "",
+                      description: oppData.description || "",
+                      registeredCount: oppData.registeredCount || 0,
+                      createdBy: oppData.createdBy || "", // Add createdBy field
+                    }
+                  }
+                }
+                return null
+              })
+
+              const results = await Promise.all(opportunitiesPromises)
+              opportunitiesList = results.filter(Boolean) as Opportunity[]
+
+              // Sort by date (oldest first)
+              opportunitiesList.sort((a, b) => {
+                // Handle potential undefined dates with fallback to empty string
+                const dateA = a.date ? new Date(a.date).getTime() : 0
+                const dateB = b.date ? new Date(b.date).getTime() : 0
+                return dateA - dateB // Sort in ascending order (oldest first)
+              })
+            }
           }
         }
       }
-
+      
       setOpportunities(opportunitiesList)
     } catch (error) {
       console.error("Error fetching opportunities:", error)
@@ -624,11 +635,7 @@ export default function ProfileScreen() {
       <View style={styles.statusBarSpacer} />
 
       {/* Header with back button */}
-      <View style={styles.headerContainer}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <ArrowLeft size={24} color="#000" />
-        </TouchableOpacity>
-      </View>
+      {/* Header container removed entirely */}
 
       {/* Profile Header */}
       <View style={styles.profileHeader}>
@@ -809,6 +816,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
+    marginTop: 40, // Reduced from 60 to 40 to move content up
     marginBottom: 20,
     position: "relative",
   },
