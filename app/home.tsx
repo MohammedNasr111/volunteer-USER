@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, type SetStateAction, useCallback } from "react"
+import React, { useState, useEffect, type SetStateAction, useCallback } from "react"
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Dimensions,
+  TextInput,
 } from "react-native"
 import { useRouter, useFocusEffect } from "expo-router"
 import { StatusBar } from "expo-status-bar"
@@ -80,6 +81,7 @@ export default function HomeScreen() {
   const [userCauses, setUserCauses] = useState<Cause[]>([])
   const [isFiltered, setIsFiltered] = useState(false)
   const [organizations, setOrganizations] = useState<Organization[]>([])
+  const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([])
   const [loadingOrganizations, setLoadingOrganizations] = useState(false)
   const [showAllNewOpportunities, setShowAllNewOpportunities] = useState(false)
 
@@ -708,20 +710,49 @@ export default function HomeScreen() {
     }
   }, [activeTab, organizations.length, fetchOrganizations])
 
+  // Effect to filter organizations when search query changes
+  useEffect(() => {
+    if (activeTab === "organization" && organizations.length > 0) {
+      if (!searchQuery.trim()) {
+        // If search query is empty, show all organizations
+        setFilteredOrganizations(organizations)
+      } else {
+        // Filter organizations based on search query
+        const query = searchQuery.toLowerCase().trim()
+        const filtered = organizations.filter(org => 
+          org.name.toLowerCase().includes(query) || 
+          (org.description && org.description.toLowerCase().includes(query))
+        )
+        setFilteredOrganizations(filtered)
+      }
+    }
+  }, [searchQuery, organizations, activeTab])
+
+  // Reset filtered organizations when tab changes
+  useEffect(() => {
+    if (activeTab === "organization") {
+      setFilteredOrganizations(organizations)
+    }
+  }, [activeTab, organizations])
+
   if (!fontsLoaded) {
     return null // Return null while fonts are loading
   }
 
   const handleTabChange = (tabId: SetStateAction<string>) => {
     setActiveTab(tabId)
+    setSearchQuery("") // Clear search query when changing tabs
   }
 
   const handleSearch = () => {
-    // Navigate to discover page with search query
-    router.push({
-      pathname: "/discover",
-      params: { query: searchQuery },
-    } as any)
+    if (activeTab === "causes") {
+      // Navigate to discover page with search query for causes tab
+      router.push({
+        pathname: "/discover",
+        params: { query: searchQuery },
+      } as any)
+    }
+    // For organization tab, searching is handled by the useEffect hook
   }
 
   // Update the handleUpdateLocation function to navigate to the location screen
@@ -796,12 +827,24 @@ export default function HomeScreen() {
       )
     }
 
+    if (filteredOrganizations.length === 0 && searchQuery.trim() !== "") {
+      return (
+        <View style={styles.organizationsContainer}>
+          <Text style={styles.sectionTitle}>Organizations</Text>
+          <Text style={styles.organizationsSubtitle}>Discover organizations creating volunteer opportunities</Text>
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>No results found for "{searchQuery}"</Text>
+          </View>
+        </View>
+      )
+    }
+
     return (
       <View style={styles.organizationsContainer}>
         <Text style={styles.sectionTitle}>Organizations</Text>
         <Text style={styles.organizationsSubtitle}>Discover organizations creating volunteer opportunities</Text>
 
-        {organizations.map((org) => (
+        {filteredOrganizations.map((org) => (
           <OrganizationCard key={org.id} organization={org} onPress={() => handleOrganizationPress(org.id)} />
         ))}
       </View>
@@ -950,12 +993,22 @@ export default function HomeScreen() {
       </View>
 
       {/* Search bar - Now below the toggle */}
-      <TouchableOpacity style={styles.searchContainer} onPress={handleSearch}>
+      <View style={styles.searchContainer}>
         <Search size={20} color="#999" style={styles.searchIcon} />
-        <Text style={styles.searchPlaceholder}>
-          {activeTab === "causes" ? "Find Volunteer Opportunities" : "Search Organizations"}
-        </Text>
-      </TouchableOpacity>
+        {activeTab === "causes" ? (
+          <TouchableOpacity style={{flex: 1}} onPress={handleSearch}>
+            <Text style={styles.searchPlaceholder}>Find Volunteer Opportunities</Text>
+          </TouchableOpacity>
+        ) : (
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search Organizations"
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+        )}
+      </View>
 
       {/* The rest of the content remains the same */}
       <ScrollView
@@ -1021,7 +1074,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginHorizontal: 20,
-    marginBottom: 15,
+    marginVertical: 10,
     paddingHorizontal: 15,
     height: 45,
     backgroundColor: "#f5f5f5",
@@ -1036,11 +1089,17 @@ const styles = StyleSheet.create({
     flex: 1,
     color: "#999",
     fontSize: 14,
+    textAlignVertical: "center",
+    includeFontPadding: false,
+    paddingVertical: 0,
   },
   searchInput: {
     flex: 1,
     height: "100%",
     fontSize: 14,
+    textAlignVertical: "center",
+    paddingVertical: 0,
+    includeFontPadding: false,
   },
   scrollView: {
     flex: 1,

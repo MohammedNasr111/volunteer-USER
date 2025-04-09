@@ -1332,8 +1332,8 @@ export default function HistoryScreen() {
             </>
           )}
 
-          {/* Find More Causes Button */}
-          <TouchableOpacity style={styles.findMoreButton} onPress={handleFindMoreCauses}>
+          {/* Find More Causes Button - Convert to Floating Action Button */}
+          <TouchableOpacity style={styles.floatingActionButton} onPress={handleFindMoreCauses}>
             <Text style={styles.findMoreButtonText}>Find More Causes</Text>
           </TouchableOpacity>
         </View>
@@ -1733,19 +1733,37 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 16,
   },
+  findMoreButtonContainer: {
+    // Remove this style
+  },
   findMoreButton: {
+    // Remove this style
+  },
+  floatingActionButton: {
+    position: 'absolute',
+    bottom: 80, // Position above bottom navigation
+    alignSelf: 'center',
     backgroundColor: "#000",
-    paddingVertical: 12,
-    paddingHorizontal: 24,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
     borderRadius: 24,
-    alignItems: "center",
-    marginTop: 16,
-    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    zIndex: 1000,
+    minWidth: 160,
+    maxWidth: 220,
   },
   findMoreButtonText: {
     color: "#fff",
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: "bold",
+    textAlign: "center",
   },
   modalContainer: {
     flex: 1,

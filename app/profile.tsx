@@ -530,10 +530,6 @@ export default function ProfileScreen() {
     }
   }
 
-  const handleFindMoreCauses = () => {
-    router.push("/home" as any)
-  }
-
   const handleOpportunityPress = (opportunityId: string) => {
     router.push(`/opportunity/${opportunityId}` as any)
   }
@@ -739,13 +735,6 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      {/* Find More Causes Button */}
-      {opportunities.length === 0 && (
-        <TouchableOpacity style={styles.findMoreButton} onPress={handleFindMoreCauses}>
-          <Text style={styles.findMoreText}>Find More Causes</Text>
-        </TouchableOpacity>
-      )}
-
       {/* Rank Info Modal */}
       {showRankInfo && (
         <View style={styles.modalOverlay}>
@@ -900,6 +889,15 @@ const styles = StyleSheet.create({
     marginRight: 8,
     color: "#fff",
   },
+  infoIconButton: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 4,
+  },
   levelContainer: {
     backgroundColor: "#fff",
     paddingHorizontal: 10,
@@ -1025,117 +1023,6 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: "#666",
-    textAlign: "center",
-  },
-  findMoreButton: {
-    backgroundColor: "#000",
-    borderRadius: 25,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    marginHorizontal: 20,
-    marginVertical: 15,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  findMoreText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-  infoIconButton: {
-    marginLeft: 5,
-    padding: 2,
-  },
-  modalOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 1000,
-  },
-  modalContainer: {
-    width: "85%",
-    backgroundColor: "#fff",
-    borderRadius: 15,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-    maxHeight: "70%",
-  },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 15,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-  },
-  modalTitle: {
-    fontFamily: "AbhayaLibre-ExtraBold",
-    fontSize: 22,
-    color: "#15B2BF",
-  },
-  closeButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: "#f0f0f0",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalSubtitle: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 15,
-  },
-  ranksList: {
-    maxHeight: 300,
-  },
-  rankItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f5f5f5",
-  },
-  rankItemBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 15,
-    minWidth: 100,
-    alignItems: "center",
-  },
-  rankItemText: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#fff",
-    textShadowColor: "rgba(0, 0, 0, 0.3)",
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 2,
-  },
-  rankItemLevel: {
-    fontSize: 14,
-    color: "#333",
-  },
-  modalFooter: {
-    fontSize: 12,
-    color: "#666",
-    fontStyle: "italic",
-    marginTop: 15,
     textAlign: "center",
   },
   contentContainer: {
@@ -1268,5 +1155,93 @@ const styles = StyleSheet.create({
   },
   compactClockIcon: {
     marginRight: 4,
+  },
+  modalOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 1000,
+  },
+  modalContainer: {
+    width: "85%",
+    backgroundColor: "#fff",
+    borderRadius: 15,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    maxHeight: "70%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 15,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  modalTitle: {
+    fontFamily: "AbhayaLibre-ExtraBold",
+    fontSize: 22,
+    color: "#15B2BF",
+  },
+  closeButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#f0f0f0",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 15,
+  },
+  ranksList: {
+    maxHeight: 300,
+  },
+  rankItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f5f5f5",
+  },
+  rankItemBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    minWidth: 100,
+    alignItems: "center",
+  },
+  rankItemText: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#fff",
+    textShadowColor: "rgba(0, 0, 0, 0.3)",
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+  },
+  rankItemLevel: {
+    fontSize: 14,
+    color: "#333",
+  },
+  modalFooter: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
+    marginTop: 15,
+    textAlign: "center",
   },
 })
