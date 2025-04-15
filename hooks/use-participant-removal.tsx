@@ -31,13 +31,13 @@ export function useParticipantRemoval() {
         const adminData = adminDoc.data()
         return {
           email: adminData.workEmail || adminData.email,
-          organizationName: adminData.organizationName,
+          organizationName: adminData.organizationName || "Unknown Organization",
         }
       }
     } catch (error) {
       console.error("Error fetching admin details:", error)
     }
-    return { email: undefined, organizationName: undefined }
+    return { email: undefined, organizationName: "Unknown Organization" }
   }
 
   // Function to check for removal notifications when user logs in
@@ -109,8 +109,11 @@ export function useParticipantRemoval() {
               type: "removal",
               timestamp: new Date().toISOString(),
               seen: false,
+              read: false,
               organizerEmail: email,
-              causeName: data.causeName
+              causeName: data.causeName,
+              organizationName: organizationName || "Unknown Organization",
+              reason: data.reason || "Not specified"
             })
 
             console.log(`User ${userId} removed from cause ${data.causeId} successfully`)
@@ -200,8 +203,11 @@ export function useParticipantRemoval() {
                       type: "removal",
                       timestamp: new Date().toISOString(),
                       seen: false,
+                      read: false,
                       organizerEmail: email,
-                      causeName: data.causeName
+                      causeName: data.causeName,
+                      organizationName: organizationName || "Unknown Organization",
+                      reason: data.reason || "Not specified"
                     })
 
                     console.log(`User ${userId} removed from cause ${data.causeId} successfully`)

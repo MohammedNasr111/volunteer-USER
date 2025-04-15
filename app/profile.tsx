@@ -622,6 +622,10 @@ export default function ProfileScreen() {
     setShowRankInfo(!showRankInfo)
   }
 
+  const handleFindMoreCauses = () => {
+    router.push("/home" as any)
+  }
+
   if (!fontsLoaded || loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -731,16 +735,21 @@ export default function ProfileScreen() {
       ) : (
         <View style={styles.contentContainer}>
           <FlatList
-            key={`opportunities-${activeTab}`} // Add a key that changes when the tab changes
+            key={`opportunities-${activeTab}`}
             data={opportunities}
             renderItem={({ item }) => <CompactOpportunityCard opportunity={item} onPress={handleOpportunityPress} />}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.opportunitiesContent}
-            numColumns={2} // Change to 2 columns
-            columnWrapperStyle={styles.columnWrapper} // Add style for columns
+            numColumns={2}
+            columnWrapperStyle={styles.columnWrapper}
           />
         </View>
       )}
+
+      {/* Find More Causes Button */}
+      <TouchableOpacity style={styles.floatingActionButton} onPress={handleFindMoreCauses}>
+        <Text style={styles.findMoreButtonText}>Find More Causes</Text>
+      </TouchableOpacity>
 
       {/* Rank Info Modal */}
       {showRankInfo && (
@@ -1249,6 +1258,32 @@ const styles = StyleSheet.create({
     color: "#666",
     fontStyle: "italic",
     marginTop: 15,
+    textAlign: "center",
+  },
+  floatingActionButton: {
+    position: 'absolute',
+    bottom: 80, // Position above bottom navigation
+    alignSelf: 'center',
+    backgroundColor: "#000",
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 24,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    zIndex: 1000,
+    minWidth: 160,
+    maxWidth: 220,
+  },
+  findMoreButtonText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "bold",
     textAlign: "center",
   },
 })

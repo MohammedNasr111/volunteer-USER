@@ -9,14 +9,15 @@ import {
   SectionList,
   ActivityIndicator,
   Linking,
+  Alert,
 } from "react-native"
 import { useRouter } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { collection, query, where, getDocs, updateDoc, doc, orderBy } from "firebase/firestore"
+import { collection, query, where, getDocs, updateDoc, doc, orderBy, getDoc, deleteDoc, writeBatch } from "firebase/firestore"
 import { auth, db } from "./firebase/config"
 import { useFonts } from "expo-font"
 import BottomNavigation from "../components/bottom-navigation"
-import { ChevronLeft, Bell, Calendar, Clock, Check, UserCog, LogIn, LogOut, UserPlus, X } from "lucide-react-native"
+import { ChevronLeft, Bell, Calendar, Clock, Check, UserCog, LogIn, LogOut, UserPlus, X, Trash2 } from "lucide-react-native"
 import { notificationService } from "../services/notificationService"
 import { NotificationContext } from "./_layout"
 
@@ -31,6 +32,8 @@ interface Notification {
   organizerEmail?: string
   causeId?: string
   causeName?: string
+  organizationName?: string
+  reason?: string
 }
 
 declare global {
@@ -94,7 +97,8 @@ export default function NotificationsScreen() {
   const [loading, setLoading] = useState(true)
   const [unreadCount, setUnreadCount] = useState(0)
   const { setUnreadCount: setGlobalUnreadCount } = useContext(NotificationContext)
-
+  const [isClearing, setIsClearing] = useState(false);
+  
   // Load the required fonts
   const [fontsLoaded] = useFonts({
     "Alata-Regular": require("../assets/fonts/Alata-Regular.ttf"),
@@ -133,16 +137,26 @@ export default function NotificationsScreen() {
       
       console.log("Marking all notifications as read...")
       
-      // Update all notifications in Firestore - important to use 'read' field
-      // instead of 'seen' to match the query in the _layout.tsx file
-      const promises = notificationsData.map(notification => {
-        const notificationRef = doc(db, "notifications", notification.id)
-        return updateDoc(notificationRef, { read: true, seen: true })
-      })
+      // IMPORTANT: Only update regular notifications from the notifications collection
+      // Filter out removal notifications which have different document IDs
+      const regularNotifications = notificationsData.filter(n => 
+        // Only update notifications from the notifications collection
+        // Removal notifications have a specific format or source
+        !n.id.includes("removal_") && n.type !== "removal"
+      );
       
-      await Promise.all(promises)
+      if (regularNotifications.length > 0) {
+        // Update all notifications in Firestore
+        const promises = regularNotifications.map(notification => {
+          const notificationRef = doc(db, "notifications", notification.id)
+          return updateDoc(notificationRef, { read: true, seen: true })
+        })
+        
+        await Promise.all(promises)
+        console.log(`Marked ${regularNotifications.length} regular notifications as read`)
+      }
       
-      // Update local state
+      // Just update local state for all notifications
       const updatedNotifications = notificationsData.map(n => ({ ...n, seen: true }))
       setNotifications(updatedNotifications)
       
@@ -151,9 +165,14 @@ export default function NotificationsScreen() {
       setGlobalUnreadCount(0)
       global.unreadNotificationCount = 0
       
-      console.log(`Marked ${notificationsData.length} notifications as read`)
+      console.log(`Updated UI for ${notificationsData.length} notifications as read`)
     } catch (error) {
       console.error("Error marking notifications as read:", error)
+      // Continue with UI updates even if DB update fails
+      const updatedNotifications = notificationsData.map(n => ({ ...n, seen: true }))
+      setNotifications(updatedNotifications)
+      setUnreadCount(0)
+      setGlobalUnreadCount(0)
     }
   }, [setGlobalUnreadCount])
 
@@ -205,6 +224,7 @@ export default function NotificationsScreen() {
         const userId = auth.currentUser?.uid
         if (!userId) return
 
+        // Fetch regular notifications
         const notificationsRef = collection(db, "notifications")
         const q = query(
           notificationsRef,
@@ -213,29 +233,126 @@ export default function NotificationsScreen() {
         )
         const querySnapshot = await getDocs(q)
         
+        // Process notifications
         const notificationsData = querySnapshot.docs.map(doc => {
           const data = doc.data();
+          
+          // Parse timestamp
+          let timestamp;
+          if (data.timestamp?.toDate) {
+            timestamp = data.timestamp.toDate();
+          } else if (data.timestamp) {
+            timestamp = new Date(data.timestamp);
+          } else {
+            timestamp = new Date();
+          }
+          
+          // Create notification object
           return {
             id: doc.id,
-            ...data,
-            timestamp: data.timestamp?.toDate?.() || new Date(),
+            title: data.title || '',
+            message: data.message || '',
+            type: data.type || '',
+            timestamp: timestamp,
+            seen: data.seen || false,
+            userId: data.userId,
+            causeName: data.causeName,
+            causeId: data.causeId,
+            organizationName: data.organizationName,
+            reason: data.reason,
+            organizerEmail: data.organizerEmail
           };
-        }) as Notification[]
-
-        setNotifications(notificationsData)
-        updateUnreadCount(notificationsData)
+        });
         
-        // Mark all notifications as read
-        markAllAsRead(notificationsData)
+        // Direct fetch for participant removals
+        const removalsRef = collection(db, "participantRemovals");
+        const removalsQuery = query(
+          removalsRef,
+          where("userId", "==", userId)
+        );
+        
+        const removalsSnapshot = await getDocs(removalsQuery);
+        
+        // Process each removal and fetch admin details
+        const removalPromises = removalsSnapshot.docs.map(async (docSnapshot) => {
+          const data = docSnapshot.data();
+          
+          // If adminId is available, fetch admin details
+          let orgName = "Unknown Organization";
+          let orgEmail = null;
+          
+          if (data.adminId) {
+            try {
+              const adminRef = doc(db, "admins", data.adminId);
+              const adminSnapshot = await getDoc(adminRef);
+              
+              if (adminSnapshot.exists()) {
+                const adminData = adminSnapshot.data();
+                // Make sure we get the organization name and work email
+                orgName = adminData.organizationName;
+                orgEmail = adminData.workEmail;
+                
+                // For removals, prefix ID with 'removal_' to distinguish from regular notifications
+                return {
+                  id: `removal_${docSnapshot.id}`,
+                  title: "Removed from Cause",
+                  message: `You have been removed from "${data.causeName}" by ${orgName} due to "${data.reason}"`,
+                  type: "removal",
+                  timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+                  seen: data.seen || false,
+                  userId: data.userId,
+                  causeName: data.causeName,
+                  causeId: data.causeId,
+                  organizationName: orgName,
+                  reason: data.reason,
+                  organizerEmail: orgEmail
+                };
+              }
+            } catch (error) {
+              console.error("Error fetching admin details:", error);
+            }
+          }
+          
+          // Fallback if admin details couldn't be fetched
+          return {
+            id: `removal_${docSnapshot.id}`,
+            title: "Removed from Cause",
+            message: `You have been removed from "${data.causeName}" by ${data.organizationName || 'Unknown Organization'}" due to "${data.reason}"`,
+            type: "removal",
+            timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+            seen: data.seen || false,
+            userId: data.userId,
+            causeName: data.causeName,
+            causeId: data.causeId,
+            organizationName: data.organizationName || orgName,
+            reason: data.reason,
+            organizerEmail: data.adminEmail || orgEmail
+          };
+        });
+        
+        // Resolve all removal promises
+        const removalNotifications = await Promise.all(removalPromises);
+        
+        // Combine and sort all notifications
+        const allNotifications = [...notificationsData, ...removalNotifications]
+          .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        
+        console.log(`Fetched ${allNotifications.length} notifications`);
+        
+        setNotifications(allNotifications);
+        updateUnreadCount(allNotifications);
+        
+        // Mark all notifications as read - only affects Firebase for regular notifications
+        markAllAsRead(allNotifications);
       } catch (error) {
-        console.error("Error fetching notifications:", error)
+        console.error("Error fetching notifications:", error);
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
-    }
+    };
 
-    fetchNotifications()
-  }, [updateUnreadCount, markAllAsRead])
+    fetchNotifications();
+  }, [updateUnreadCount, markAllAsRead]);
 
   // Format date for display
   const formatDate = (date: Date) => {
@@ -282,30 +399,51 @@ export default function NotificationsScreen() {
   }
 
   // Update to render notification item without click handler
-  const renderNotificationItem = useCallback(({ item }: { item: Notification }) => (
-    <View style={styles.notificationItem}>
-      <View style={styles.notificationIcon}>
-        {getNotificationIcon(item.type, true)}
-      </View>
-      <View style={styles.notificationContent}>
-        <Text style={styles.notificationTitle}>{item.title}</Text>
-        <Text style={styles.notificationMessage}>{item.message}</Text>
-        {item.type === 'removal' && item.organizerEmail && (
-          <TouchableOpacity
-            onPress={() => handleEmailPress(item.organizerEmail!, item.causeName!)}
-          >
-            <Text style={styles.emailLink}>Contact organizer</Text>
-          </TouchableOpacity>
-        )}
-        <View style={styles.timeContainer}>
-          <View style={styles.timeItem}>
-            <Clock size={14} color="#999" />
-            <Text style={styles.timestamp}>{formatTime(item.timestamp)}</Text>
+  const renderNotificationItem = useCallback(({ item }: { item: Notification }) => {
+    return (
+      <View style={styles.notificationItem}>
+        <View style={styles.notificationIcon}>
+          {getNotificationIcon(item.type, true)}
+        </View>
+        <View style={styles.notificationContent}>
+          <Text style={styles.notificationTitle}>{item.title}</Text>
+          
+          {/* Message for all notifications */}
+          <Text style={styles.notificationMessage}>
+            {item.type === 'removal' 
+              ? `You have been removed from "${item.causeName || 'unknown cause'}" by ${item.organizationName} due to "${item.reason || 'unspecified reason'}".`
+              : item.message
+            }
+          </Text>
+          
+          {/* Special display for removal notifications */}
+          {item.type === 'removal' && (
+            <View style={styles.removalDetails}>
+              {item.organizerEmail ? (
+                <TouchableOpacity
+                  onPress={() => handleEmailPress(item.organizerEmail!, item.causeName || "this cause")}
+                >
+                  <Text style={styles.contactText}>
+                    For more information, contact:
+                  </Text>
+                  <Text style={styles.emailLink}>{item.organizerEmail}</Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.contactText}>No contact information available</Text>
+              )}
+            </View>
+          )}
+          
+          <View style={styles.timeContainer}>
+            <View style={styles.timeItem}>
+              <Clock size={14} color="#999" />
+              <Text style={styles.timestamp}>{formatTime(item.timestamp)}</Text>
+            </View>
           </View>
         </View>
       </View>
-    </View>
-  ), [])
+    );
+  }, [])
 
   const renderSectionHeader = useCallback(({ section: { title } }: { section: { title: string } }) => (
     <View style={styles.sectionHeader}>
@@ -323,6 +461,71 @@ export default function NotificationsScreen() {
   // Optimize data to improve list performance
   const memoizedSections = useMemo(() => sections, [notifications]);
 
+  // Handle clear all notifications
+  const handleClearAll = useCallback(async () => {
+    Alert.alert(
+      "Clear All Notifications",
+      "This will delete all your notifications. This action cannot be undone.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        {
+          text: "Clear All",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setIsClearing(true);
+              const userId = auth.currentUser?.uid;
+              if (!userId) return;
+              
+              // Create a batch for all operations
+              const batch = writeBatch(db);
+              
+              // Delete all notifications
+              for (const notification of notifications) {
+                if (!notification.id.startsWith('removal_')) {
+                  // Delete regular notifications
+                  const notificationRef = doc(db, "notifications", notification.id);
+                  batch.delete(notificationRef);
+                } else {
+                  // Delete removal notifications
+                  const removalId = notification.id.replace('removal_', '');
+                  const removalRef = doc(db, "participantRemovals", removalId);
+                  batch.delete(removalRef);
+                }
+              }
+              
+              // Commit all changes
+              await batch.commit();
+              
+              // Clear all notifications from local state
+              setNotifications([]);
+              setUnreadCount(0);
+              setGlobalUnreadCount(0);
+              global.unreadNotificationCount = 0;
+              
+              console.log('Successfully deleted all notifications');
+              
+            } catch (error: any) {
+              // Ignore BloomFilter warning as it's not critical
+              if (error?.name !== 'BloomFilterError') {
+                console.error("Error clearing notifications:", error);
+                Alert.alert(
+                  "Error",
+                  "Failed to clear notifications. Please try again later."
+                );
+              }
+            } finally {
+              setIsClearing(false);
+            }
+          }
+        }
+      ]
+    );
+  }, [notifications, setGlobalUnreadCount]);
+
   if (!fontsLoaded) {
     return null
   }
@@ -338,22 +541,25 @@ export default function NotificationsScreen() {
             <ChevronLeft size={24} color="#000" />
           </TouchableOpacity>
         </View>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Notification System</Text>
-        </View>
+        <Text style={styles.headerTitle}>Notification System</Text>
         <View style={styles.headerRight}>
-          {unreadCount > 0 && (
-            <View style={styles.countBadge}>
-              <Text style={styles.countText}>{unreadCount}</Text>
-            </View>
+          {notifications.length > 0 && (
+            <TouchableOpacity 
+              style={styles.clearButton} 
+              onPress={handleClearAll}
+              disabled={isClearing}
+            >
+              <Trash2 size={20} color="#fff" />
+            </TouchableOpacity>
           )}
         </View>
       </View>
 
       {/* Notifications List */}
-      {loading ? (
+      {loading || isClearing ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#15B2BF" />
+          {isClearing && <Text style={styles.loadingText}>Clearing notifications...</Text>}
         </View>
       ) : (
         <SectionList
@@ -386,6 +592,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingTop: 60,
     paddingBottom: 25,
@@ -403,20 +610,17 @@ const styles = StyleSheet.create({
     width: 40,
     alignItems: 'flex-start',
   },
-  headerCenter: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerRight: {
-    width: 40,
-    alignItems: 'flex-end',
-  },
   headerTitle: {
     fontFamily: "AbhayaLibre-ExtraBold",
     fontSize: 20,
+    color: "#000000",
     textAlign: "center",
-    color: "#15B2BF",
+    flex: 1,
+  },
+  headerRight: {
+    width: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   backButton: {
     padding: 8,
@@ -482,6 +686,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8,
     fontWeight: "500",
+    textAlign: "center",
+  },
+  contactText: {
+    fontSize: 14,
+    color: "#333",
+    marginBottom: 6,
+    lineHeight: 20,
+    textAlign: "center",
   },
   timeContainer: {
     flexDirection: "row",
@@ -528,5 +740,40 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginLeft: 8,
     fontFamily: "Lato-Bold",
+  },
+  removalDetails: {
+    marginVertical: 8,
+    padding: 12,
+    backgroundColor: '#fcf2f2',
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#FF3B30',
+  },
+  removalDetail: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 6,
+    lineHeight: 20,
+  },
+  detailLabel: {
+    fontWeight: "bold",
+    color: '#555',
+  },
+  clearButton: {
+    backgroundColor: '#FF3B30',
+    padding: 8,
+    borderRadius: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#666",
   },
 });
