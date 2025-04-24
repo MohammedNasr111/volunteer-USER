@@ -6,7 +6,7 @@ import { getStorage } from "firebase/storage"
 import { getDatabase, ref, get, set } from "firebase/database" // Add this import
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
-// Your Firebase configuration
+// Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCLu0Xgjug_21FG2mK44_D5Kcbx89W5LL8",
   authDomain: "volunteer-connect-7f417.firebaseapp.com",
@@ -20,18 +20,18 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig)
 
-// Initialize Firebase Auth with AsyncStorage persistence
+// Firebase Auth with AsyncStorage persistence
 const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage),
 })
 
-// Initialize Cloud Firestore and get a reference to the service
+// Cloud Firestore and get a reference to the service
 const db = getFirestore(app)
 
-// Initialize Storage
+// Storage
 const storage = getStorage(app)
 
-// Initialize Realtime Database
+// Realtime Database
 const realtimeDb = getDatabase(app)
 
 // Mark a participant removal notification as seen

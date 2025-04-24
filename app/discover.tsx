@@ -496,7 +496,7 @@ export default function DiscoverScreen() {
     // Get spots text
     const maxSpots = Number.parseInt(item.volunteers || "0")
     const registeredCount = item.registeredCount || 0
-    const spotsText = `${registeredCount}/${maxSpots} spots open`
+    const spotsText = `${registeredCount}/${maxSpots} active participants`
 
     // Check if cause is saved
     const isSaved = savedCauses.includes(item.id)
